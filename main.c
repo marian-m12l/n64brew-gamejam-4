@@ -8,16 +8,16 @@ static sprite_t *tiles_sprite;
 static rspq_block_t *tiles_block;
 
 typedef struct {
-    int32_t x;
-    int32_t y;
-    int32_t dx;
-    int32_t dy;
+    float x;
+    float y;
+    float dx;
+    float dy;
     float scale_factor;
 } object_t;
 
-#define NUM_OBJECTS 64
+#define NUM_BLOBS 2
 
-static object_t objects[NUM_OBJECTS];
+static object_t blobs[NUM_BLOBS];
 
 // Fair and fast random generation (using xorshift32, with explicit seed)
 static uint32_t rand_state = 1;
@@ -36,28 +36,66 @@ static uint32_t rand(void) {
 		(uint32_t)(((uint64_t)rand() * (n)) >> 32); \
 })
 
+static int32_t obj_min_x;
 static int32_t obj_max_x;
+static int32_t obj_min_y;
 static int32_t obj_max_y;
 static int32_t cur_tick = 0;
-static uint32_t num_objs = 1;
+
+#define FRICTION_FACTOR 0.9f
+#define EPSILON 1e-1
 
 void update(int ovfl)
 {
-    for (uint32_t i = 0; i < NUM_OBJECTS; i++)
+    //fprintf(stderr, "update\n");
+    for (uint32_t i = 0; i < NUM_BLOBS; i++)
     {
-        object_t *obj = &objects[i];
+        object_t *obj = &blobs[i];
+        //fprintf(stderr, "blob[%ld]: x=%ld y=%ld dx=%f dy=%f\n", i, obj->x, obj->y, obj->dx, obj->dy);
 
-        int32_t x = obj->x + obj->dx;
-        int32_t y = obj->y + obj->dy;
+        float x = obj->x + obj->dx;
+        float y = obj->y + obj->dy;
 
-        if (x >= obj_max_x) x -= obj_max_x;
-        if (x < 0) x += obj_max_x;
-        if (y >= obj_max_y) y -= obj_max_y;
-        if (y < 0) y += obj_max_y;
+        if (x >= obj_max_x) {
+            x = obj_max_x - (x - obj_max_x);
+            obj->dx = -obj->dx;
+        }
+        if (x < obj_min_x) {
+            x = obj_min_x + (obj_min_x - x);
+            obj->dx = -obj->dx;
+        }
+        if (y >= obj_max_y) {
+            y = obj_max_y - (y - obj_max_y);
+            obj->dy = -obj->dy;
+        }
+        if (y < obj_min_x) {
+            y = obj_min_x + (obj_min_x - y);
+            obj->dy = -obj->dy;
+        }
         
         obj->x = x;
         obj->y = y;
-        obj->scale_factor = sinf(cur_tick * 0.1f + i) * 0.5f + 1.5f;
+
+        //fprintf(stderr, "blob[%ld]: x=%ld y=%ld dx=%f dy=%f\n", i, obj->x, obj->y, obj->dx, obj->dy);
+        //fprintf(stderr, "blob[%ld]: fabs(dx)=%f\n", i, fabs(obj->dx));
+
+        // Apply gravity / friction
+        if (obj->dx != 0) {
+            if (fabs(obj->dx) < EPSILON) {
+                fprintf(stderr, "dx < %f --> 0\n", EPSILON);
+                obj->dx = 0;
+            } else {
+                //fprintf(stderr, "applying friction...\n");
+                float next_dx = fabs(obj->dx) * FRICTION_FACTOR;
+                //fprintf(stderr, "blob[%ld]: next_dx=%f obj->dx=%f/%f\n", i, next_dx, -1.0f * next_dx, next_dx);
+                fprintf(stderr, "blob[%ld]: x=%f dx=%f fabs(dx)=%f next_dx=%f\n", i, obj->x, obj->dx, fabs(obj->dx), (obj->dx < 0) ? (-1.0f * next_dx) : next_dx);
+                if (obj->dx < 0) {
+                    obj->dx = -1.0f * next_dx;
+                } else {
+                    obj->dx = next_dx;
+                }
+            }
+        }
     }
     cur_tick++;
 }
@@ -86,10 +124,10 @@ void render(int cur_frame)
     rdpq_mode_filter(FILTER_BILINEAR);
     rdpq_mode_alphacompare(1);                // colorkey (draw pixel with alpha >= 1)
 
-    for (uint32_t i = 0; i < num_objs; i++)
+    for (uint32_t i = 0; i < NUM_BLOBS; i++)
     {
-        rdpq_sprite_blit(brew_sprite, objects[i].x, objects[i].y, &(rdpq_blitparms_t){
-            .scale_x = objects[i].scale_factor, .scale_y = objects[i].scale_factor,
+        rdpq_sprite_blit(brew_sprite, (int32_t) blobs[i].x, (int32_t) blobs[i].y, &(rdpq_blitparms_t){
+            .scale_x = blobs[i].scale_factor, .scale_y = blobs[i].scale_factor,
         });
     }
 
@@ -114,20 +152,25 @@ int main()
     rdpq_init();
     rdpq_debug_start();
 
+    fprintf(stderr, "Starting\n");
+
     brew_sprite = sprite_load("rom:/n64brew.sprite");
 
+    obj_min_x = 0;
     obj_max_x = display_width - brew_sprite->width;
+    obj_min_y = 0;
     obj_max_y = display_height - brew_sprite->height;
 
-    for (uint32_t i = 0; i < NUM_OBJECTS; i++)
+    for (uint32_t i = 0; i < NUM_BLOBS; i++)
     {
-        object_t *obj = &objects[i];
+        fprintf(stderr, "init blob[%ld]\n", i);
+        object_t *obj = &blobs[i];
 
-        obj->x = RANDN(obj_max_x);
-        obj->y = RANDN(obj_max_y);
-
-        obj->dx = -3 + RANDN(7);
-        obj->dy = -3 + RANDN(7);
+        obj->x = 40 + i*160;
+        obj->y = 200;
+        obj->dx = 0;
+        obj->dy = 0;
+        fprintf(stderr, "blob[%ld]: x=%f y=%f dx=%f dy=%f\n", i, obj->x, obj->y, obj->dx, obj->dy);
     }
 
     tiles_sprite = sprite_load("rom:/tiles.sprite");
@@ -176,20 +219,31 @@ int main()
     update(0);
     new_timer(TIMER_TICKS(1000000 / 60), TF_CONTINUOUS, update);
 
+    fprintf(stderr, "Entering main loop\n");
+
     int cur_frame = 0;
     while (1)
     {
         render(cur_frame);
 
         controller_scan();
-        struct controller_data ckeys = get_keys_down();
+        //struct controller_data ckeys = get_keys_down();
+        struct controller_data pressed = get_keys_pressed();
 
-        if (ckeys.c[0].C_up && num_objs < NUM_OBJECTS) {
-            ++num_objs;
-        }
+        for (uint32_t i = 0; i < NUM_BLOBS; i++)
+        {
+            object_t *obj = &blobs[i];
+            if (pressed.c[i].up) {  // TODO Jump if not mid-air
+                obj->dy = -2;
+            }
 
-        if (ckeys.c[0].C_down && num_objs > 1) {
-            --num_objs;
+            if (pressed.c[i].left) {
+                obj->dx = -3;
+            }
+
+            if (pressed.c[i].right) {
+                obj->dx = 3;
+            }
         }
 
         cur_frame++;
