@@ -204,43 +204,69 @@ void update(int ovfl)
     cur_tick++;
 }
 
-void render(int cur_frame)
+void render(int cur_frame, int mode)
 {
-    // Attach and clear the screen
     surface_t *disp = display_get();
-    rdpq_attach_clear(disp, NULL);
 
-    // Draw the tile background, by playing back the compiled block.
-    // This is using copy mode by default, but notice how it can switch
-    // to standard mode (aka "1 cycle" in RDP terminology) in a completely
-    // transparent way. Even if the block is compiled, the RSP commands within it
-    // will adapt its commands to the current render mode, Try uncommenting
-    // the line below to see.
-    rdpq_debug_log_msg("tiles");
-    rdpq_set_mode_copy(false);
-    // rdpq_set_mode_standard();
-    rspq_block_run(tiles_block);
+    /*Fill the screen */
+    graphics_fill_screen(disp, 0xFFFFFFFF);
+
+    /* Set the text output color */
+    graphics_set_color(0x0, 0xFFFFFFFF);
     
-    // Draw the brew sprites. Use standard mode because copy mode cannot handle
-    // scaled sprites.
-    rdpq_debug_log_msg("sprites");
-    rdpq_set_mode_standard();
-    rdpq_mode_filter(FILTER_BILINEAR);
-    rdpq_mode_alphacompare(1);                // colorkey (draw pixel with alpha >= 1)
+    if (mode == 0) {    // RDPQ
+        // Attach and clear the screen
+        graphics_draw_text( disp, 20, 20, "Mode 0: RDPQ" );
 
-    for (uint32_t i = 0; i < NUM_BLOBS; i++)
-    {
-        rdpq_sprite_blit(brew_sprite, (int32_t) blobs[i].x, (int32_t) blobs[i].y, &(rdpq_blitparms_t){
-            .scale_x = blobs[i].scale_factor, .scale_y = blobs[i].scale_factor,
+        rdpq_attach/*_clear*/(disp, NULL);
+
+        // Draw the tile background, by playing back the compiled block.
+        // This is using copy mode by default, but notice how it can switch
+        // to standard mode (aka "1 cycle" in RDP terminology) in a completely
+        // transparent way. Even if the block is compiled, the RSP commands within it
+        // will adapt its commands to the current render mode, Try uncommenting
+        // the line below to see.
+        rdpq_debug_log_msg("tiles");
+        rdpq_set_mode_copy(false);
+        // rdpq_set_mode_standard();
+        rspq_block_run(tiles_block);
+        
+        // Draw the brew sprites. Use standard mode because copy mode cannot handle
+        // scaled sprites.
+        rdpq_debug_log_msg("sprites");
+        rdpq_set_mode_standard();
+        rdpq_mode_filter(FILTER_BILINEAR);
+        rdpq_mode_alphacompare(1);                // colorkey (draw pixel with alpha >= 1)
+
+        for (uint32_t i = 0; i < NUM_BLOBS; i++)
+        {
+            rdpq_sprite_blit(brew_sprite, (int32_t) blobs[i].x, (int32_t) blobs[i].y, &(rdpq_blitparms_t){
+                .scale_x = blobs[i].scale_factor, .scale_y = blobs[i].scale_factor,
+            });
+        }
+
+        // Ball
+        rdpq_sprite_blit(ball_sprite, (int32_t) (ball.x - ball_sprite->width/2), (int32_t) (ball.y - ball_sprite->height/2), &(rdpq_blitparms_t){
+            .scale_x = ball.scale_factor, .scale_y = ball.scale_factor,
         });
+
+        rdpq_detach();//_show();
+        
+        graphics_draw_text( disp, 20, 20, "Mode 0: RDPQ" );
+    } else {    // Sprites
+        graphics_draw_text( disp, 20, 20, "Mode 1: Sprites" );
+
+        for (uint32_t i = 0; i < NUM_BLOBS; i++)
+        {
+            graphics_draw_sprite_trans(disp, (int32_t) blobs[i].x, (int32_t) blobs[i].y, brew_sprite);
+        }
+
+        // Ball
+        graphics_draw_sprite_trans(disp, (int32_t) (ball.x - ball_sprite->width/2), (int32_t) (ball.y - ball_sprite->height/2), ball_sprite);
     }
 
-    // Ball
-    rdpq_sprite_blit(ball_sprite, (int32_t) (ball.x - ball_sprite->width/2), (int32_t) (ball.y - ball_sprite->height/2), &(rdpq_blitparms_t){
-        .scale_x = ball.scale_factor, .scale_y = ball.scale_factor,
-    });
-
-    rdpq_detach_show();
+    /* Force backbuffer flip */
+    display_show(disp);
 }
 
 #include <float.h>
@@ -341,13 +367,19 @@ int main()
     fprintf(stderr, "Entering main loop\n");
 
     int cur_frame = 0;
+    int mode = 0;
     while (1)
     {
-        render(cur_frame);
+        render(cur_frame, mode);
 
         controller_scan();
-        //struct controller_data ckeys = get_keys_down();
+        struct controller_data ckeys = get_keys_down();
         struct controller_data pressed = get_keys_pressed();
+
+        // TODO switch render mode rdpq / sprites ??
+        if (ckeys.c[0].A) {
+            mode = (mode + 1) % 2;
+        }
 
         for (uint32_t i = 0; i < NUM_BLOBS; i++)
         {
