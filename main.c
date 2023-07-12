@@ -42,8 +42,11 @@ static int32_t obj_min_y;
 static int32_t obj_max_y;
 static int32_t cur_tick = 0;
 
+#define FRAMERATE 60
 #define FRICTION_FACTOR 0.9f
-#define EPSILON 1e-1
+#define GRAVITY_FACTOR 9.81f
+#define SPEED_EPSILON 1e-1
+#define POSITION_EPSILON 10
 
 void update(int ovfl)
 {
@@ -66,7 +69,7 @@ void update(int ovfl)
         }
         if (y >= obj_max_y) {
             y = obj_max_y - (y - obj_max_y);
-            obj->dy = -obj->dy;
+            obj->dy = -obj->dy / 2;
         }
         if (y < obj_min_x) {
             y = obj_min_x + (obj_min_x - y);
@@ -81,20 +84,28 @@ void update(int ovfl)
 
         // Apply gravity / friction
         if (obj->dx != 0) {
-            if (fabs(obj->dx) < EPSILON) {
-                fprintf(stderr, "dx < %f --> 0\n", EPSILON);
+            if (fabs(obj->dx) < SPEED_EPSILON) {
+                fprintf(stderr, "dx < %f --> 0\n", SPEED_EPSILON);
                 obj->dx = 0;
             } else {
                 //fprintf(stderr, "applying friction...\n");
                 float next_dx = fabs(obj->dx) * FRICTION_FACTOR;
                 //fprintf(stderr, "blob[%ld]: next_dx=%f obj->dx=%f/%f\n", i, next_dx, -1.0f * next_dx, next_dx);
-                fprintf(stderr, "blob[%ld]: x=%f dx=%f fabs(dx)=%f next_dx=%f\n", i, obj->x, obj->dx, fabs(obj->dx), (obj->dx < 0) ? (-1.0f * next_dx) : next_dx);
+                //fprintf(stderr, "blob[%ld]: x=%f dx=%f fabs(dx)=%f next_dx=%f\n", i, obj->x, obj->dx, fabs(obj->dx), (obj->dx < 0) ? (-1.0f * next_dx) : next_dx);
                 if (obj->dx < 0) {
                     obj->dx = -1.0f * next_dx;
                 } else {
                     obj->dx = next_dx;
                 }
             }
+        }
+        if (obj->dy > 0 && obj->dy < SPEED_EPSILON && (obj_max_y - fabs(obj->y)) < POSITION_EPSILON) {
+            fprintf(stderr, "dy < %f --> 0\n", SPEED_EPSILON);
+            obj->dy = 0;
+        } else if (obj->y != obj_max_y) {
+            float next_dy = obj->dy + (GRAVITY_FACTOR / FRAMERATE);
+            //fprintf(stderr, "blob[%ld]: y=%f dy=%f fabs(dy)=%f next_dy=%f\n", i, obj->y, obj->dy, fabs(obj->dy), next_dy);
+            obj->dy = next_dy;
         }
     }
     cur_tick++;
@@ -217,7 +228,7 @@ int main()
     tiles_block = rspq_block_end();
 
     update(0);
-    new_timer(TIMER_TICKS(1000000 / 60), TF_CONTINUOUS, update);
+    new_timer(TIMER_TICKS(1000000 / FRAMERATE), TF_CONTINUOUS, update);
 
     fprintf(stderr, "Entering main loop\n");
 
@@ -233,8 +244,8 @@ int main()
         for (uint32_t i = 0; i < NUM_BLOBS; i++)
         {
             object_t *obj = &blobs[i];
-            if (pressed.c[i].up) {  // TODO Jump if not mid-air
-                obj->dy = -2;
+            if (pressed.c[i].up && (obj_max_y - fabs(obj->y)) < POSITION_EPSILON) {
+                obj->dy = -6;
             }
 
             if (pressed.c[i].left) {
