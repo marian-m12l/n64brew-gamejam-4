@@ -67,13 +67,11 @@ vector2d_t circleRect(float cx, float cy, float radius, float rx, float ry, floa
 
   // if the distance is less than the radius, collision!
   vector2d_t normal = {0, 0};
-  if (distance <= radius) {
+  if (distance > 0 && distance <= radius) {
     normal.x = distX/distance;
     normal.y = distY/distance;
   }
   return normal;
-  // TODO Also compute normal ??? from nearest point --> normalized vector
-    // (distX/distance, distY/distance)
 }
 
 static int32_t obj_min_x;
@@ -367,7 +365,7 @@ int main()
     fprintf(stderr, "Entering main loop\n");
 
     int cur_frame = 0;
-    int mode = 0;
+    int mode = 1;
     while (1)
     {
         render(cur_frame, mode);
