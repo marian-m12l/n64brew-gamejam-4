@@ -3,6 +3,7 @@
 #include <math.h>
 
 static sprite_t *brew_sprite;
+static sprite_t *ball_sprite;
 static sprite_t *tiles_sprite;
 
 static rspq_block_t *tiles_block;
@@ -10,14 +11,20 @@ static rspq_block_t *tiles_block;
 typedef struct {
     float x;
     float y;
+} vector2d_t;
+
+typedef struct {
+    float x;
+    float y;
     float dx;
     float dy;
-    float scale_factor;
+    float scale_factor; // TODO support separate x/y scale factors? support rotation?
 } object_t;
 
 #define NUM_BLOBS 2
 
 static object_t blobs[NUM_BLOBS];
+static object_t ball;
 
 // Fair and fast random generation (using xorshift32, with explicit seed)
 static uint32_t rand_state = 1;
@@ -36,6 +43,39 @@ static uint32_t rand(void) {
 		(uint32_t)(((uint64_t)rand() * (n)) >> 32); \
 })
 
+bool rectRect(float r1x, float r1y, float r1w, float r1h, float r2x, float r2y, float r2w, float r2h) {
+  return (r1x + r1w >= r2x &&    // r1 right edge past r2 left
+          r1x <= r2x + r2w &&    // r1 left edge past r2 right
+          r1y + r1h >= r2y &&    // r1 top edge past r2 bottom
+          r1y <= r2y + r2h);     // r1 bottom edge past r2 top
+}
+
+vector2d_t circleRect(float cx, float cy, float radius, float rx, float ry, float rw, float rh) {
+  float nearestX = cx;
+  float nearestY = cy;
+
+  // which edge is closest?
+  if (cx < rx)         nearestX = rx;      // test left edge
+  else if (cx > rx+rw) nearestX = rx+rw;   // right edge
+  if (cy < ry)         nearestY = ry;      // top edge
+  else if (cy > ry+rh) nearestY = ry+rh;   // bottom edge
+
+  // get distance from closest edges
+  float distX = cx - nearestX;
+  float distY = cy - nearestY;
+  float distance = sqrt( (distX*distX) + (distY*distY) );
+
+  // if the distance is less than the radius, collision!
+  vector2d_t normal = {0, 0};
+  if (distance <= radius) {
+    normal.x = distX/distance;
+    normal.y = distY/distance;
+  }
+  return normal;
+  // TODO Also compute normal ??? from nearest point --> normalized vector
+    // (distX/distance, distY/distance)
+}
+
 static int32_t obj_min_x;
 static int32_t obj_max_x;
 static int32_t obj_min_y;
@@ -48,6 +88,61 @@ static int32_t cur_tick = 0;
 #define SPEED_EPSILON 1e-1
 #define POSITION_EPSILON 10
 
+void applyScreenLimits(object_t* obj) {
+    float x = obj->x + obj->dx;
+    float y = obj->y + obj->dy;
+
+    if (x >= obj_max_x) {
+        x = obj_max_x - (x - obj_max_x);
+        obj->dx = -obj->dx;
+    }
+    if (x < obj_min_x) {
+        x = obj_min_x + (obj_min_x - x);
+        obj->dx = -obj->dx;
+    }
+    if (y >= obj_max_y) {
+        y = obj_max_y - (y - obj_max_y);
+        obj->dy = -obj->dy / 2;
+    }
+    if (y < obj_min_x) {
+        y = obj_min_x + (obj_min_x - y);
+        obj->dy = -obj->dy;
+    }
+    
+    obj->x = x;
+    obj->y = y;
+}
+
+void applyFriction(object_t* obj) {
+    if (obj->dx != 0) {
+        if (fabs(obj->dx) < SPEED_EPSILON) {
+            fprintf(stderr, "dx < %f --> 0\n", SPEED_EPSILON);
+            obj->dx = 0;
+        } else {
+            //fprintf(stderr, "applying friction...\n");
+            float next_dx = fabs(obj->dx) * FRICTION_FACTOR;
+            //fprintf(stderr, "blob[%ld]: next_dx=%f obj->dx=%f/%f\n", i, next_dx, -1.0f * next_dx, next_dx);
+            //fprintf(stderr, "blob[%ld]: x=%f dx=%f fabs(dx)=%f next_dx=%f\n", i, obj->x, obj->dx, fabs(obj->dx), (obj->dx < 0) ? (-1.0f * next_dx) : next_dx);
+            if (obj->dx < 0) {
+                obj->dx = -1.0f * next_dx;
+            } else {
+                obj->dx = next_dx;
+            }
+        }
+    }
+}
+
+void applyGravity(object_t* obj) {
+    if (obj->dy > 0 && obj->dy < SPEED_EPSILON && (obj_max_y - fabs(obj->y)) < POSITION_EPSILON) {
+        fprintf(stderr, "dy < %f --> 0\n", SPEED_EPSILON);
+        obj->dy = 0;
+    } else if (obj->y != obj_max_y) {
+        float next_dy = obj->dy + (GRAVITY_FACTOR / FRAMERATE);
+        //fprintf(stderr, "blob[%ld]: y=%f dy=%f fabs(dy)=%f next_dy=%f\n", i, obj->y, obj->dy, fabs(obj->dy), next_dy);
+        obj->dy = next_dy;
+    }
+}
+
 void update(int ovfl)
 {
     //fprintf(stderr, "update\n");
@@ -56,58 +151,56 @@ void update(int ovfl)
         object_t *obj = &blobs[i];
         //fprintf(stderr, "blob[%ld]: x=%ld y=%ld dx=%f dy=%f\n", i, obj->x, obj->y, obj->dx, obj->dy);
 
-        float x = obj->x + obj->dx;
-        float y = obj->y + obj->dy;
-
-        if (x >= obj_max_x) {
-            x = obj_max_x - (x - obj_max_x);
-            obj->dx = -obj->dx;
-        }
-        if (x < obj_min_x) {
-            x = obj_min_x + (obj_min_x - x);
-            obj->dx = -obj->dx;
-        }
-        if (y >= obj_max_y) {
-            y = obj_max_y - (y - obj_max_y);
-            obj->dy = -obj->dy / 2;
-        }
-        if (y < obj_min_x) {
-            y = obj_min_x + (obj_min_x - y);
-            obj->dy = -obj->dy;
-        }
-        
-        obj->x = x;
-        obj->y = y;
+        applyScreenLimits(obj);
 
         //fprintf(stderr, "blob[%ld]: x=%ld y=%ld dx=%f dy=%f\n", i, obj->x, obj->y, obj->dx, obj->dy);
         //fprintf(stderr, "blob[%ld]: fabs(dx)=%f\n", i, fabs(obj->dx));
 
         // Apply gravity / friction
-        if (obj->dx != 0) {
-            if (fabs(obj->dx) < SPEED_EPSILON) {
-                fprintf(stderr, "dx < %f --> 0\n", SPEED_EPSILON);
-                obj->dx = 0;
-            } else {
-                //fprintf(stderr, "applying friction...\n");
-                float next_dx = fabs(obj->dx) * FRICTION_FACTOR;
-                //fprintf(stderr, "blob[%ld]: next_dx=%f obj->dx=%f/%f\n", i, next_dx, -1.0f * next_dx, next_dx);
-                //fprintf(stderr, "blob[%ld]: x=%f dx=%f fabs(dx)=%f next_dx=%f\n", i, obj->x, obj->dx, fabs(obj->dx), (obj->dx < 0) ? (-1.0f * next_dx) : next_dx);
-                if (obj->dx < 0) {
-                    obj->dx = -1.0f * next_dx;
-                } else {
-                    obj->dx = next_dx;
-                }
-            }
+        applyFriction(obj);
+        applyGravity(obj);
+
+        // TODO Handle collisions
+            // Player / Net (bounce / block)
+            // Player / Ball (up to 3 hits per turn)
+            // Screen borders / Ball (bounce, loose some momentum)
+            // Ground / Ball (end point)
+            // Player / Bonus ??? (higher bounce, faster speed, move net down/up, ...)
+            
+        // FIXME DEBUG player/player collision NOT NEEDED
+        if (rectRect(blobs[0].x, blobs[0].y, brew_sprite->width, brew_sprite->height, blobs[1].x, blobs[1].y, brew_sprite->width, brew_sprite->height)) {
+            fprintf(stderr, "PLAYERS COLLISION\n");
         }
-        if (obj->dy > 0 && obj->dy < SPEED_EPSILON && (obj_max_y - fabs(obj->y)) < POSITION_EPSILON) {
-            fprintf(stderr, "dy < %f --> 0\n", SPEED_EPSILON);
-            obj->dy = 0;
-        } else if (obj->y != obj_max_y) {
-            float next_dy = obj->dy + (GRAVITY_FACTOR / FRAMERATE);
-            //fprintf(stderr, "blob[%ld]: y=%f dy=%f fabs(dy)=%f next_dy=%f\n", i, obj->y, obj->dy, fabs(obj->dy), next_dy);
-            obj->dy = next_dy;
+        // FIXME Ball collision
+        vector2d_t collisionNormal = circleRect(ball.x, ball.y, ball_sprite->width/2, obj->x, obj->y, brew_sprite->width, brew_sprite->height);
+        if (collisionNormal.x != 0 || collisionNormal.y != 0) {
+            fprintf(stderr, "PLAYER/BALL COLLISION: normal=(%f, %f) ball=(%f,%f)(%f,%f) obj=(%f,%f)(%f,%f)\n",
+                collisionNormal.x, collisionNormal.y,
+                ball.x, ball.y, ball.dx, ball.dy,
+                obj->x, obj->y, obj->dx, obj->dy);
+            float next_ball_dx = collisionNormal.x * (ball.dx + obj->dx);
+            float next_ball_dy = collisionNormal.y * (ball.dy + obj->dy);
+            fprintf(stderr, "\tball.dx: %f --> %f\n", ball.dx, next_ball_dx);
+            fprintf(stderr, "\tball.dy: %f --> %f\n", ball.dy, next_ball_dy);
+            // TODO Compute bounce vector from ball/player centers ???
+            // TODO player's momentum should transfer to ball !!!
+            // TODO ball effects? lift/slice? + magnus effect when in flight???
+
+            // FIXME also bounce with ball velocity ???
+            ball.dx += next_ball_dx;
+            ball.dy += next_ball_dy;
+            // TODO player's momentum also reduce by ball momentum (before hit)? --> add a weight factor ??
+
+            // TODO: new ball dx = old ball dx **reverted if hitting from the side** --> multiplied by normal vector ??
         }
+        // TODO Resolve collisions
     }
+
+    // Ball
+    applyScreenLimits(&ball);
+    // TODO also air friction? magnus effect?
+    applyGravity(&ball);
+
     cur_tick++;
 }
 
@@ -142,8 +235,16 @@ void render(int cur_frame)
         });
     }
 
+    // Ball
+    rdpq_sprite_blit(ball_sprite, (int32_t) (ball.x - ball_sprite->width/2), (int32_t) (ball.y - ball_sprite->height/2), &(rdpq_blitparms_t){
+        .scale_x = ball.scale_factor, .scale_y = ball.scale_factor,
+    });
+
     rdpq_detach_show();
 }
+
+#include <float.h>
+#include "n64sys.h"
 
 int main()
 {
@@ -183,6 +284,13 @@ int main()
         obj->dy = 0;
         fprintf(stderr, "blob[%ld]: x=%f y=%f dx=%f dy=%f\n", i, obj->x, obj->y, obj->dx, obj->dy);
     }
+
+
+    ball_sprite = sprite_load("rom:/ball.sprite");
+    ball.x = 160;
+    ball.y = 0;
+    ball.dx = 0;
+    ball.dy = 0;
 
     tiles_sprite = sprite_load("rom:/tiles.sprite");
 
