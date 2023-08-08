@@ -35,6 +35,11 @@ static object_t blobs[NUM_BLOBS];
 static object_t ball;
 static object_t net;
 
+static int scorePlayer1 = 0;
+static int scorePlayer2 = 0;
+static int lastPlayer = -1;
+static int hitCount = 0;
+
 static int mode = 1;
 
 // Fair and fast random generation (using xorshift32, with explicit seed)
@@ -104,29 +109,43 @@ static collision_t collisions[NUM_BLOBS];
 #define SPEED_EPSILON 1e-1
 #define POSITION_EPSILON 10
 
-void applyScreenLimits(object_t* obj) {
-    float x = obj->x + obj->dx;
-    float y = obj->y + obj->dy;
+void applyScreenLimits(float x, float y, float w, float h, float dx, float dy, object_t* obj) {
+    float next_x = x + dx;
+    float next_y = y + dy;
 
-    if (x >= obj_max_x) {
-        x = obj_max_x - (x - obj_max_x);
-        obj->dx = -obj->dx;
+    if (next_x + w >= obj_max_x) {
+        next_x = obj_max_x - (next_x + w - obj_max_x) - w;
+        obj->dx = -1.0 * dx;
+        //fprintf(stderr, "X position %f >= %ld --> BOUNCE TO %f, dx=%f\n", next_x + w, obj_max_x, next_x, obj->dx);
     }
-    if (x < obj_min_x) {
-        x = obj_min_x + (obj_min_x - x);
-        obj->dx = -obj->dx;
+    if (next_x < obj_min_x) {
+        next_x = obj_min_x + (obj_min_x - next_x);
+        obj->dx = -1.0 * dx;
+        //fprintf(stderr, "X position %f < %ld --> BOUNCE TO %f, dx=%f\n", next_x, obj_min_x, next_x, obj->dx);
     }
-    if (y >= obj_max_y) {
-        y = obj_max_y - (y - obj_max_y);
-        obj->dy = -obj->dy / 2;
+    if (next_y + h >= obj_max_y) {
+        next_y = obj_max_y - (next_y + h - obj_max_y) - h;
+        obj->dy = -1.0 * dy / 2;
+        //fprintf(stderr, "Y position %f >= %ld --> BOUNCE TO %f, dy=%f\n", next_y + h, obj_max_y, next_y, obj->dy);
     }
-    if (y < obj_min_x) {
-        y = obj_min_x + (obj_min_x - y);
-        obj->dy = -obj->dy;
+    if (next_y < obj_min_y) {
+        next_y = obj_min_y + (obj_min_x - next_y);
+        obj->dy = -1.0 * dy;
+        //fprintf(stderr, "Y position %f < %ld --> BOUNCE TO %f, dy=%f\n", next_y, obj_min_y, next_y, obj->dy);
     }
     
-    obj->x = x;
-    obj->y = y;
+    obj->x = next_x;
+    obj->y = next_y;
+}
+
+void applyScreenLimitsRect(object_t* obj, sprite_t* sprite) {
+    applyScreenLimits(obj->x, obj->y, sprite->width, sprite->height, obj->dx, obj->dy, obj);
+}
+
+void applyScreenLimitsCircle(object_t* obj, sprite_t* sprite) {
+    applyScreenLimits(obj->x - sprite->width/2, obj->y - sprite->height/2, sprite->width, sprite->height, obj->dx, obj->dy, obj);
+    obj->x += sprite->width/2;
+    obj->y += sprite->height/2;
 }
 
 void applyFriction(object_t* obj) {
@@ -168,7 +187,8 @@ void update(int ovfl)
     }
 
     // Ball
-    applyScreenLimits(&ball);
+    //fprintf(stderr, "Applying screen limits BALL\n");
+    applyScreenLimitsCircle(&ball, ball_sprite);
     // TODO also air friction? magnus effect?
     applyFriction(&ball);
     applyGravity(&ball);
@@ -179,6 +199,59 @@ void update(int ovfl)
     if (netCollisionNormal.x != 0 || netCollisionNormal.y != 0) {
         // TODO Stop / bounce
         fprintf(stderr, "Ball/Net collision\n");
+
+            // TODO Use (normalized) vector from player center to ball center instead of nearest collision poiint ???
+            float distX = ball.x - (net.x + net_sprite->width/2);
+            float distY = ball.y - (net.y + net_sprite->height/2);
+            float distance = sqrt( (distX*distX) + (distY*distY) );
+            //vector2d_t netBall = { distX, distY };
+            vector2d_t netBallNormal = {
+                distX/distance,
+                distY/distance
+            };
+            netCollisionNormal = netBallNormal;
+
+            fprintf(stderr, "NET/BALL COLLISION: normal=(%f, %f) ball=(%f,%f)(%f,%f) net=(%f,%f)(%f,%f)\n",
+                netCollisionNormal.x, netCollisionNormal.y,
+                ball.x, ball.y, ball.dx, ball.dy,
+                net.x, net.y, net.dx, net.dy);
+            // TODO if hitting on the side, reverse ball dx
+            // TODO If hitting on top, reverse ball dy
+            float next_ball_dx = (netCollision.pos.x == net.x || netCollision.pos.x == (net.x + net_sprite->width)) ? -1.0f * ball.dx : ball.dx;
+            float next_ball_dy = (netCollision.pos.y == net.y) ? -1.0f *ball.dy : ball.dy;
+            fprintf(stderr, "\tball.dx: %f --> %f\n", ball.dx, next_ball_dx);
+            fprintf(stderr, "\tball.dy: %f --> %f\n", ball.dy, next_ball_dy);
+            // TODO ball effects? lift/slice? + magnus effect when in flight???
+
+            ball.dx = next_ball_dx;
+            ball.dy = next_ball_dy;
+
+            // TODO Resolve collisions --> move ball
+            float next_ball_x = ball.x;
+            float next_ball_y = ball.y;
+            // TODO dependns on nearest X/Y ? if to the right, add x, if to the left, sub x, if to the top, add y if to the bottom, sub y
+            if (netCollision.pos.x == net.x) {
+                // Ball is on the left
+                fprintf(stderr, "\tResolving collision by moving ball to the LEFT by: %f\n", ball_sprite->width/2 - fabs(netCollision.dir.x));
+                next_ball_x -= ball_sprite->width/2 - fabs(netCollision.dir.x);
+            } else if (netCollision.pos.x == (net.x + net_sprite->width)) {
+                // Ball is on the right
+                fprintf(stderr, "\tResolving collision by moving ball to the RIGHT by: %f\n", ball_sprite->width/2 - fabs(netCollision.dir.x));
+                next_ball_x += ball_sprite->width/2 - fabs(netCollision.dir.x);
+            } else if (netCollision.pos.y == net.y) {
+                // Ball is on the top
+                fprintf(stderr, "\tResolving collision by moving ball to the TOP by: %f\n", ball_sprite->height/2 - fabs(netCollision.dir.y));
+                next_ball_y -= ball_sprite->height/2 - fabs(netCollision.dir.y);
+            } else if (netCollision.pos.y == (net.y + net_sprite->height)) {
+                // Ball is on the bottom
+                fprintf(stderr, "\tResolving collision by moving ball to the BOTTOM by: %f\n", ball_sprite->height/2 - fabs(netCollision.dir.y));
+                next_ball_y += ball_sprite->height/2 - fabs(netCollision.dir.y);
+            }
+
+            fprintf(stderr, "\tball.x: %f --> %f\n", ball.x, next_ball_x);
+            fprintf(stderr, "\tball.y: %f --> %f\n", ball.y, next_ball_y);
+            ball.x = next_ball_x;
+            ball.y = next_ball_y;
     }
 
     // TODO When colliding with floor, stop point and increase score
@@ -189,7 +262,8 @@ void update(int ovfl)
         object_t *obj = &blobs[i];
         //fprintf(stderr, "blob[%ld]: x=%ld y=%ld dx=%f dy=%f\n", i, obj->x, obj->y, obj->dx, obj->dy);
 
-        applyScreenLimits(obj); // FIXME Handle with collisions to be resolved all at once ?
+        //fprintf(stderr, "Applying screen limits PLAYER %ld\n", i);
+        applyScreenLimitsRect(obj, brew_sprite); // FIXME Handle with collisions to be resolved all at once ?
 
         //fprintf(stderr, "blob[%ld]: x=%ld y=%ld dx=%f dy=%f\n", i, obj->x, obj->y, obj->dx, obj->dy);
         //fprintf(stderr, "blob[%ld]: fabs(dx)=%f\n", i, fabs(obj->dx));
@@ -209,11 +283,22 @@ void update(int ovfl)
         /*if (rectRect(blobs[0].x, blobs[0].y, brew_sprite->width, brew_sprite->height, blobs[1].x, blobs[1].y, brew_sprite->width, brew_sprite->height)) {
             fprintf(stderr, "PLAYERS COLLISION\n");
         }*/
+
+        // FIXME Player/net collision
+        if (rectRect(obj->x, obj->y, brew_sprite->width, brew_sprite->height, net.x, net.y, net_sprite->width, net_sprite->height)) {
+            fprintf(stderr, "Player / Net collision\n");
+            // TODO Reposition player to the left/right of net
+            if (obj->x < net.x) {
+                obj->x = net.x - brew_sprite->width;
+            } else {
+                obj->x = net.x + net_sprite->width;
+            }
+        }
         
         // FIXME Ball collision
         collision_t collision = circleRect(ball.x, ball.y, ball_sprite->width/2, obj->x, obj->y, brew_sprite->width, brew_sprite->height);
         vector2d_t collisionNormal = collision.normalized;
-        if (collisionNormal.x != 0 || collisionNormal.y != 0) {
+        if ((collisionNormal.x != 0 || collisionNormal.y != 0) && !(lastPlayer == i && hitCount > 2)) {
             // TODO Use (normalized) vector from player center to ball center instead of nearest collision poiint ???
             float distX = ball.x - (obj->x + brew_sprite->width/2);
             float distY = ball.y - (obj->y + brew_sprite->height/2);
@@ -282,6 +367,13 @@ void update(int ovfl)
             ball.y = next_ball_y;
 
             // TODO draw normal vector?? bounding boxes???
+
+            // TODO Max 3 hits per player
+            if (lastPlayer != i) {
+                lastPlayer = i;
+                hitCount = 0;
+            }
+            hitCount++;
         }
         collisions[i] = collision;
         // TODO Resolve collisions
@@ -386,8 +478,13 @@ void render(int cur_frame, int mode)
 
         // TODO Draw scores
         char scores[15];
-        snprintf(scores, sizeof(scores), "Score: %d | %d", 21, 9);
+        snprintf(scores, sizeof(scores), "Score: %d | %d", scorePlayer1, scorePlayer2);
         graphics_draw_text(disp, display_get_width()/4.0f, 40, scores);
+
+        // TODO Draw debug data
+        char debug[15];
+        snprintf(debug, sizeof(debug), "Hits: %d (P%d)", hitCount, lastPlayer);
+        graphics_draw_text(disp, 3.0*(display_get_width()/4.0f), 40, debug);
     } else {
         // TODO Can write to disp->buffer ?! --> memcpy ??? DMA ???
         static uint32_t offset;
@@ -438,16 +535,16 @@ int main()
     brew_sprite = sprite_load("rom:/n64brew.sprite");
 
     obj_min_x = 5;
-    obj_max_x = display_width - brew_sprite->width - 5;
+    obj_max_x = display_width - 5;
     obj_min_y = 5;
-    obj_max_y = display_height - brew_sprite->height - 5;
+    obj_max_y = display_height - 15;
 
     for (uint32_t i = 0; i < NUM_BLOBS; i++)
     {
         fprintf(stderr, "init blob[%ld]\n", i);
         object_t *obj = &blobs[i];
 
-        obj->x = 40 + i*(display_width - 80);
+        obj->x = i == 0 ? 40 : display_width - brew_sprite->width - 40;
         obj->y = 200;
         obj->dx = 0;
         obj->dy = 0;
@@ -535,7 +632,7 @@ int main()
         for (uint32_t i = 0; i < NUM_BLOBS; i++)
         {
             object_t *obj = &blobs[i];
-            if ((pressed.c[i].up || pressed.c[i].A || pressed.c[i].B) && (obj_max_y - fabs(obj->y)) < POSITION_EPSILON) {
+            if ((pressed.c[i].up || pressed.c[i].A || pressed.c[i].B) && (obj_max_y - fabs(obj->y) - brew_sprite->height) < POSITION_EPSILON) {
                 obj->dy = -6;
             }
 
