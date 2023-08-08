@@ -4,6 +4,7 @@
 
 static sprite_t *brew_sprite;
 static sprite_t *ball_sprite;
+static sprite_t *net_sprite;
 static sprite_t *tiles_sprite;
 
 static rspq_block_t *tiles_block;
@@ -28,10 +29,13 @@ typedef struct {
     float scale_factor; // TODO support separate x/y scale factors? support rotation?
 } object_t;
 
-#define NUM_BLOBS 1 // FIXME 2
+#define NUM_BLOBS 2
 
 static object_t blobs[NUM_BLOBS];
 static object_t ball;
+static object_t net;
+
+static int mode = 1;
 
 // Fair and fast random generation (using xorshift32, with explicit seed)
 static uint32_t rand_state = 1;
@@ -94,7 +98,7 @@ static int32_t cur_tick = 0;
 static collision_t collisions[NUM_BLOBS];
 
 #define FRAMERATE 60
-#define AIR_FRICTION_FACTOR 0.95f
+#define AIR_FRICTION_FACTOR 0.99f
 #define GROUND_FRICTION_FACTOR 0.9f
 #define GRAVITY_FACTOR 9.81f
 #define SPEED_EPSILON 1e-1
@@ -159,13 +163,33 @@ void applyGravity(object_t* obj) {
 
 void update(int ovfl)
 {
+    if (mode == 2) {
+        return;
+    }
+
+    // Ball
+    applyScreenLimits(&ball);
+    // TODO also air friction? magnus effect?
+    applyFriction(&ball);
+    applyGravity(&ball);
+
+    // TODO Handle collision with net
+    collision_t netCollision = circleRect(ball.x, ball.y, ball_sprite->width/2, net.x, net.y, net_sprite->width, net_sprite->height);
+    vector2d_t netCollisionNormal = netCollision.normalized;
+    if (netCollisionNormal.x != 0 || netCollisionNormal.y != 0) {
+        // TODO Stop / bounce
+        fprintf(stderr, "Ball/Net collision\n");
+    }
+
+    // TODO When colliding with floor, stop point and increase score
+
     //fprintf(stderr, "update\n");
     for (uint32_t i = 0; i < NUM_BLOBS; i++)
     {
         object_t *obj = &blobs[i];
         //fprintf(stderr, "blob[%ld]: x=%ld y=%ld dx=%f dy=%f\n", i, obj->x, obj->y, obj->dx, obj->dy);
 
-        applyScreenLimits(obj);
+        applyScreenLimits(obj); // FIXME Handle with collisions to be resolved all at once ?
 
         //fprintf(stderr, "blob[%ld]: x=%ld y=%ld dx=%f dy=%f\n", i, obj->x, obj->y, obj->dx, obj->dy);
         //fprintf(stderr, "blob[%ld]: fabs(dx)=%f\n", i, fabs(obj->dx));
@@ -263,12 +287,6 @@ void update(int ovfl)
         // TODO Resolve collisions
     }
 
-    // Ball
-    applyScreenLimits(&ball);
-    // TODO also air friction? magnus effect?
-    applyFriction(&ball);
-    applyGravity(&ball);
-
     cur_tick++;
 }
 
@@ -321,7 +339,7 @@ void render(int cur_frame, int mode)
         rdpq_detach();//_show();
         
         graphics_draw_text( disp, 20, 20, "Mode 0: RDPQ" );
-    } else {    // Sprites
+    } else if (mode == 1) {    // Sprites
         graphics_draw_text( disp, 20, 20, "Mode 1: Sprites" );
 
         for (uint32_t i = 0; i < NUM_BLOBS; i++)
@@ -333,6 +351,10 @@ void render(int cur_frame, int mode)
         graphics_draw_sprite_trans(disp, (int32_t) (ball.x - ball_sprite->width/2), (int32_t) (ball.y - ball_sprite->height/2), ball_sprite);
 
 
+        // TODO Draw center
+        graphics_draw_line_trans(disp, (int32_t) ball.x, (int32_t) ball.y, (int32_t) ball.x, (int32_t) ball.y, graphics_make_color(0,255,0,255));
+        // TODO draw velocity from ball center ??
+        graphics_draw_line_trans(disp, (int32_t) ball.x, (int32_t) ball.y, (int32_t) ball.x + ball.dx*3, (int32_t) ball.y + ball.dy*3, graphics_make_color(0,0,255,255));
 
 
         for (uint32_t i = 0; i < NUM_BLOBS; i++)
@@ -355,11 +377,35 @@ void render(int cur_frame, int mode)
             graphics_draw_line_trans(disp, (int32_t) blobs[i].x + brew_sprite->width/2, (int32_t) blobs[i].y + brew_sprite->height/2, (int32_t) blobs[i].x + brew_sprite->width/2 + blobs[i].dx*3, (int32_t) blobs[i].y + brew_sprite->height/2 + blobs[i].dy*3, graphics_make_color(0,0,255,255));
         }
 
+        // TODO draw net
+        graphics_draw_sprite_trans(disp, (int32_t) net.x, (int32_t) net.y, net_sprite);
+        graphics_draw_line_trans(disp, (int32_t) net.x, (int32_t) net.y, (int32_t) net.x + net_sprite->width, (int32_t) net.y, graphics_make_color(0,255,0,255));
+        graphics_draw_line_trans(disp, (int32_t) net.x + net_sprite->width, (int32_t) net.y, (int32_t) net.x + net_sprite->width, (int32_t) net.y + net_sprite->height, graphics_make_color(0,255,0,255));
+        graphics_draw_line_trans(disp, (int32_t) net.x + net_sprite->width, (int32_t) net.y + net_sprite->height, (int32_t) net.x, (int32_t) net.y + net_sprite->height, graphics_make_color(0,255,0,255));
+        graphics_draw_line_trans(disp, (int32_t) net.x, (int32_t) net.y + net_sprite->height, (int32_t) net.x, (int32_t) net.y, graphics_make_color(0,255,0,255));
 
-        // TODO Draw center
-        graphics_draw_line_trans(disp, (int32_t) ball.x, (int32_t) ball.y, (int32_t) ball.x, (int32_t) ball.y, graphics_make_color(0,255,0,255));
-        // TODO draw velocity from ball center ??
-        graphics_draw_line_trans(disp, (int32_t) ball.x, (int32_t) ball.y, (int32_t) ball.x + ball.dx*3, (int32_t) ball.y + ball.dy*3, graphics_make_color(0,0,255,255));
+        // TODO Draw scores
+        char scores[15];
+        snprintf(scores, sizeof(scores), "Score: %d | %d", 21, 9);
+        graphics_draw_text(disp, display_get_width()/4.0f, 40, scores);
+    } else {
+        // TODO Can write to disp->buffer ?! --> memcpy ??? DMA ???
+        static uint32_t offset;
+        int len = TEX_FORMAT_PIX2BYTES(surface_get_format(disp), disp->width * disp->height) / 8;
+        int lineLength = len / disp->height;
+        uint64_t c64 = 0xffaa6600;  // 4 pixels @ 16bpp
+        uint64_t *buffer = (uint64_t *)(disp->buffer);
+        for( int i = 0; i < len; i++ ) {
+            int line = (i / lineLength);
+            if (line == offset) {
+                buffer[i] = c64;
+            } else if (line % 10 == 0) {
+                buffer[i] = 0xffffffff;
+            } else {
+                buffer[i] = 0;
+            }
+        }
+        offset = (offset+1) % disp->height;
     }
 
     /* Force backbuffer flip */
@@ -391,29 +437,38 @@ int main()
 
     brew_sprite = sprite_load("rom:/n64brew.sprite");
 
-    obj_min_x = 0;
-    obj_max_x = display_width - brew_sprite->width;
-    obj_min_y = 0;
-    obj_max_y = display_height - brew_sprite->height;
+    obj_min_x = 5;
+    obj_max_x = display_width - brew_sprite->width - 5;
+    obj_min_y = 5;
+    obj_max_y = display_height - brew_sprite->height - 5;
 
     for (uint32_t i = 0; i < NUM_BLOBS; i++)
     {
         fprintf(stderr, "init blob[%ld]\n", i);
         object_t *obj = &blobs[i];
 
-        obj->x = 40 + i*160;
+        obj->x = 40 + i*(display_width - 80);
         obj->y = 200;
         obj->dx = 0;
         obj->dy = 0;
+        obj->scale_factor = 1.0f;
         fprintf(stderr, "blob[%ld]: x=%f y=%f dx=%f dy=%f\n", i, obj->x, obj->y, obj->dx, obj->dy);
     }
 
 
     ball_sprite = sprite_load("rom:/ball.sprite");
-    ball.x = 160;
+    ball.x = display_width / 4.0f;
     ball.y = 0;
     ball.dx = 0;
     ball.dy = 0;
+    ball.scale_factor = 1.0f;
+
+    net_sprite = sprite_load("rom:/net.sprite");
+    net.x = display_width/2.0f - (net_sprite->width/2.0f);
+    net.y = display_height - net_sprite->height;
+    net.dx = 0;
+    net.dy = 0;
+    net.scale_factor = 1.0f;
 
     tiles_sprite = sprite_load("rom:/tiles.sprite");
 
@@ -464,7 +519,6 @@ int main()
     fprintf(stderr, "Entering main loop\n");
 
     int cur_frame = 0;
-    int mode = 1;
     while (1)
     {
         render(cur_frame, mode);
@@ -474,14 +528,14 @@ int main()
         struct controller_data pressed = get_keys_pressed();
 
         // TODO switch render mode rdpq / sprites ??
-        if (ckeys.c[0].A) {
-            mode = (mode + 1) % 2;
+        if (ckeys.c[0].Z) {
+            mode = (mode + 1) % 3;
         }
 
         for (uint32_t i = 0; i < NUM_BLOBS; i++)
         {
             object_t *obj = &blobs[i];
-            if (pressed.c[i].up && (obj_max_y - fabs(obj->y)) < POSITION_EPSILON) {
+            if ((pressed.c[i].up || pressed.c[i].A || pressed.c[i].B) && (obj_max_y - fabs(obj->y)) < POSITION_EPSILON) {
                 obj->dy = -6;
             }
 
@@ -491,6 +545,10 @@ int main()
 
             if (pressed.c[i].right) {
                 obj->dx = 3;
+            }
+
+            if (fabs(pressed.c[i].x) > 5) {
+                obj->dx = (pressed.c[i].x / 30);
             }
         }
 
