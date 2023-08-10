@@ -30,17 +30,47 @@ typedef struct {
 } object_t;
 
 #define NUM_BLOBS 2
+#define INITIAL_COUNTDOWN 3
+
+#define FRAMERATE 60
+#define AIR_FRICTION_FACTOR 0.99f
+#define GROUND_FRICTION_FACTOR 0.9f
+#define GRAVITY_FACTOR 9.81f
+#define SPEED_EPSILON 1e-1
+#define POSITION_EPSILON 10
 
 static object_t blobs[NUM_BLOBS];
 static object_t ball;
 static object_t net;
 
+static int32_t obj_min_x;
+static int32_t obj_max_x;
+static int32_t obj_min_y;
+static int32_t obj_max_y;
+static int32_t cur_tick = 0;
+
+// DEBUG collisions
+static collision_t collisions[NUM_BLOBS];
+
 static int scorePlayer1 = 0;
 static int scorePlayer2 = 0;
 static int lastPlayer = -1;
 static int hitCount = 0;
+static int countdown = 0;
+static timer_link_t* countdown_timer;
 
 static int mode = 1;
+
+
+void init_player(uint32_t i) {
+    uint32_t display_width = display_get_width();
+    object_t* obj = &blobs[i];
+    obj->x = i == 0 ? 40 : display_width - brew_sprite->width - 40;
+    obj->y = obj_max_y - brew_sprite->height;
+    obj->dx = 0;
+    obj->dy = 0;
+    obj->scale_factor = 1.0f;
+}
 
 // Fair and fast random generation (using xorshift32, with explicit seed)
 static uint32_t rand_state = 1;
@@ -92,22 +122,6 @@ collision_t circleRect(float cx, float cy, float radius, float rx, float ry, flo
   collision_t retval = {pos, dir, normal, distance};
   return retval;
 }
-
-static int32_t obj_min_x;
-static int32_t obj_max_x;
-static int32_t obj_min_y;
-static int32_t obj_max_y;
-static int32_t cur_tick = 0;
-
-// DEBUG collisions
-static collision_t collisions[NUM_BLOBS];
-
-#define FRAMERATE 60
-#define AIR_FRICTION_FACTOR 0.99f
-#define GROUND_FRICTION_FACTOR 0.9f
-#define GRAVITY_FACTOR 9.81f
-#define SPEED_EPSILON 1e-1
-#define POSITION_EPSILON 10
 
 void applyScreenLimits(float x, float y, float w, float h, float dx, float dy, object_t* obj) {
     float next_x = x + dx;
@@ -180,13 +194,65 @@ void applyGravity(object_t* obj) {
     }
 }
 
+bool in_play() {
+    return countdown == 0;
+}
+
+void update_countdown(int ovfl);
+
+void start_countdown() {
+    fprintf(stderr, "start_countdown: %d\n", countdown);
+    if (countdown_timer != NULL) {
+        restart_timer(countdown_timer);
+    } else {
+        countdown_timer = new_timer(TIMER_TICKS(1000000), TF_CONTINUOUS, update_countdown);
+    }
+}
+
+void update_countdown(int ovfl) {
+    countdown = countdown - 1;
+    if (in_play()) {
+        stop_timer(countdown_timer);
+    }
+}
+
 void update(int ovfl)
 {
     if (mode == 2) {
         return;
     }
 
+    if (!in_play()) {
+        return;
+    }
+
     // Ball
+    // Ball hits ground ???
+    if (ball.y + ball.dy + ball_sprite->height/2 >= obj_max_y) {
+        uint32_t display_width = display_get_width();
+        // TODO score + no more hits!!!
+        if (ball.x > net.x) {
+            scorePlayer1++;
+            ball.x = display_width / 4.0f;
+        } else {
+            scorePlayer2++;
+            ball.x = 3.0 * (display_width / 4.0f);
+        }
+        ball.y = 0;
+        ball.dx = 0;
+        ball.dy = 0;
+        hitCount = 0;
+        lastPlayer = -1;
+        // TODO Also relocate players ???
+        for (uint32_t i = 0; i < NUM_BLOBS; i++) {
+            init_player(i);
+        }
+        // TODO Handle next point (with a little pause)
+        countdown = INITIAL_COUNTDOWN;  // FIXME Don't allow moves during countdown ???
+        start_countdown();
+        // TODO Handle end of game
+    }
+
     //fprintf(stderr, "Applying screen limits BALL\n");
     applyScreenLimitsCircle(&ball, ball_sprite);
     // TODO also air friction? magnus effect?
@@ -404,14 +470,14 @@ void render(int cur_frame, int mode)
         // transparent way. Even if the block is compiled, the RSP commands within it
         // will adapt its commands to the current render mode, Try uncommenting
         // the line below to see.
-        rdpq_debug_log_msg("tiles");
+        //rdpq_debug_log_msg("tiles");
         rdpq_set_mode_copy(false);
         // rdpq_set_mode_standard();
         rspq_block_run(tiles_block);
         
         // Draw the brew sprites. Use standard mode because copy mode cannot handle
         // scaled sprites.
-        rdpq_debug_log_msg("sprites");
+        //rdpq_debug_log_msg("sprites");
         rdpq_set_mode_standard();
         rdpq_mode_filter(FILTER_BILINEAR);
         rdpq_mode_alphacompare(1);                // colorkey (draw pixel with alpha >= 1)
@@ -481,6 +547,15 @@ void render(int cur_frame, int mode)
         snprintf(scores, sizeof(scores), "Score: %d | %d", scorePlayer1, scorePlayer2);
         graphics_draw_text(disp, display_get_width()/4.0f, 40, scores);
 
+        // TODO Draw countdown
+        if (countdown > 0) {
+            char count[15];
+            snprintf(count, sizeof(count), "%d", countdown);
+            graphics_draw_text(disp, display_get_width()/2.0f, 80, count);
+        } else {
+            graphics_draw_text(disp, display_get_width()/2.0f, 80, " ");
+        }
+
         // TODO Draw debug data
         char debug[15];
         snprintf(debug, sizeof(debug), "Hits: %d (P%d)", hitCount, lastPlayer);
@@ -544,11 +619,7 @@ int main()
         fprintf(stderr, "init blob[%ld]\n", i);
         object_t *obj = &blobs[i];
 
-        obj->x = i == 0 ? 40 : display_width - brew_sprite->width - 40;
-        obj->y = 200;
-        obj->dx = 0;
-        obj->dy = 0;
-        obj->scale_factor = 1.0f;
+        init_player(i);
         fprintf(stderr, "blob[%ld]: x=%f y=%f dx=%f dy=%f\n", i, obj->x, obj->y, obj->dx, obj->dy);
     }
 
@@ -610,6 +681,9 @@ int main()
     if (tlut) rdpq_mode_pop();
     tiles_block = rspq_block_end();
 
+    countdown = INITIAL_COUNTDOWN;
+    start_countdown();
+
     update(0);
     new_timer(TIMER_TICKS(1000000 / FRAMERATE), TF_CONTINUOUS, update);
 
@@ -629,23 +703,25 @@ int main()
             mode = (mode + 1) % 3;
         }
 
-        for (uint32_t i = 0; i < NUM_BLOBS; i++)
-        {
-            object_t *obj = &blobs[i];
-            if ((pressed.c[i].up || pressed.c[i].A || pressed.c[i].B) && (obj_max_y - fabs(obj->y) - brew_sprite->height) < POSITION_EPSILON) {
-                obj->dy = -6;
-            }
+        if (in_play()) {
+            for (uint32_t i = 0; i < NUM_BLOBS; i++)
+            {
+                object_t *obj = &blobs[i];
+                if ((pressed.c[i].up || pressed.c[i].A || pressed.c[i].B) && (obj_max_y - fabs(obj->y) - brew_sprite->height) < POSITION_EPSILON) {
+                    obj->dy = -6;
+                }
 
-            if (pressed.c[i].left) {
-                obj->dx = -3;
-            }
+                if (pressed.c[i].left) {
+                    obj->dx = -3;
+                }
 
-            if (pressed.c[i].right) {
-                obj->dx = 3;
-            }
+                if (pressed.c[i].right) {
+                    obj->dx = 3;
+                }
 
-            if (fabs(pressed.c[i].x) > 5) {
-                obj->dx = (pressed.c[i].x / 30);
+                if (fabs(pressed.c[i].x) > 5) {
+                    obj->dx = (pressed.c[i].x / 30);
+                }
             }
         }
 
