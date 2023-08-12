@@ -436,56 +436,75 @@ void update(int ovfl)
 void render(int cur_frame)
 {
     surface_t *disp = display_get();
+    rdpq_attach_clear(disp, NULL);
 
-    /*Fill the screen */
-    graphics_fill_screen(disp, 0xFFFFFFFF);
+    rdpq_set_mode_standard();
+    rdpq_mode_filter(FILTER_BILINEAR);
+    rdpq_mode_alphacompare(1);
 
-    /* Set the text output color */
-    graphics_set_color(0x0, 0xFFFFFFFF);
+    // Fill the screen
+    // FIXME RDPQ graphics_fill_screen(disp, 0xFFFFFFFF);
 
-    graphics_draw_sprite_trans(disp, 0, 0, background_sprite);  // FIXME sprite size
+    // Set the text output color
+    // FIXME RDPQ graphics_set_color(0x0, 0xFFFFFFFF);
+    graphics_set_color(0x0, 0x00000000);
+
+
+    rdpq_sprite_blit(background_sprite, 0, 0, &(rdpq_blitparms_t){
+        .scale_x = 1, .scale_y = 1,
+    });
+    //graphics_draw_sprite_trans(disp, 0, 0, background_sprite);  // FIXME sprite size
 
     for (uint32_t i = 0; i < NUM_BLOBS; i++)
     {
-        graphics_draw_sprite_trans(disp, (int32_t) blobs[i].x, (int32_t) blobs[i].y, brew_sprite);
+        rdpq_sprite_blit(brew_sprite, blobs[i].x, blobs[i].y, &(rdpq_blitparms_t){
+            .scale_x = blobs[i].scale_factor, .scale_y = blobs[i].scale_factor,
+        });
+        //graphics_draw_sprite_trans(disp, (int32_t) blobs[i].x, (int32_t) blobs[i].y, brew_sprite);
     }
 
     // Ball
-    graphics_draw_sprite_trans(disp, (int32_t) (ball.x - ball_sprite->width/2), (int32_t) (ball.y - ball_sprite->height/2), ball_sprite);
+    rdpq_sprite_blit(ball_sprite, (ball.x - ball_sprite->width/2), (int32_t) (ball.y - ball_sprite->height/2), &(rdpq_blitparms_t){
+        .scale_x = ball.scale_factor, .scale_y = ball.scale_factor,
+    });
+    //graphics_draw_sprite_trans(disp, (int32_t) (ball.x - ball_sprite->width/2), (int32_t) (ball.y - ball_sprite->height/2), ball_sprite);
 
 
     // TODO Draw center
-    graphics_draw_line_trans(disp, (int32_t) ball.x, (int32_t) ball.y, (int32_t) ball.x, (int32_t) ball.y, graphics_make_color(0,255,0,255));
+    // FIXME RDPQ graphics_draw_line_trans(disp, (int32_t) ball.x, (int32_t) ball.y, (int32_t) ball.x, (int32_t) ball.y, graphics_make_color(0,255,0,255));
     // TODO draw velocity from ball center ??
-    graphics_draw_line_trans(disp, (int32_t) ball.x, (int32_t) ball.y, (int32_t) ball.x + ball.dx*3, (int32_t) ball.y + ball.dy*3, graphics_make_color(0,0,255,255));
+    // FIXME RDPQ graphics_draw_line_trans(disp, (int32_t) ball.x, (int32_t) ball.y, (int32_t) ball.x + ball.dx*3, (int32_t) ball.y + ball.dy*3, graphics_make_color(0,0,255,255));
 
 
     for (uint32_t i = 0; i < NUM_BLOBS; i++)
     {
-        graphics_draw_sprite_trans(disp, (int32_t) blobs[i].x, (int32_t) blobs[i].y, brew_sprite);
+        //graphics_draw_sprite_trans(disp, (int32_t) blobs[i].x, (int32_t) blobs[i].y, brew_sprite);
         // TODO Draw bounding box
-        graphics_draw_line_trans(disp, (int32_t) blobs[i].x, (int32_t) blobs[i].y, (int32_t) blobs[i].x + brew_sprite->width, (int32_t) blobs[i].y, graphics_make_color(0,255,0,255));
-        graphics_draw_line_trans(disp, (int32_t) blobs[i].x + brew_sprite->width, (int32_t) blobs[i].y, (int32_t) blobs[i].x + brew_sprite->width, (int32_t) blobs[i].y + brew_sprite->height, graphics_make_color(0,255,0,255));
-        graphics_draw_line_trans(disp, (int32_t) blobs[i].x + brew_sprite->width, (int32_t) blobs[i].y + brew_sprite->height, (int32_t) blobs[i].x, (int32_t) blobs[i].y + brew_sprite->height, graphics_make_color(0,255,0,255));
-        graphics_draw_line_trans(disp, (int32_t) blobs[i].x, (int32_t) blobs[i].y + brew_sprite->height, (int32_t) blobs[i].x, (int32_t) blobs[i].y, graphics_make_color(0,255,0,255));
+        // FIXME RDPQ graphics_draw_line_trans(disp, (int32_t) blobs[i].x, (int32_t) blobs[i].y, (int32_t) blobs[i].x + brew_sprite->width, (int32_t) blobs[i].y, graphics_make_color(0,255,0,255));
+        // FIXME RDPQ graphics_draw_line_trans(disp, (int32_t) blobs[i].x + brew_sprite->width, (int32_t) blobs[i].y, (int32_t) blobs[i].x + brew_sprite->width, (int32_t) blobs[i].y + brew_sprite->height, graphics_make_color(0,255,0,255));
+        // FIXME RDPQ graphics_draw_line_trans(disp, (int32_t) blobs[i].x + brew_sprite->width, (int32_t) blobs[i].y + brew_sprite->height, (int32_t) blobs[i].x, (int32_t) blobs[i].y + brew_sprite->height, graphics_make_color(0,255,0,255));
+        // FIXME RDPQ graphics_draw_line_trans(disp, (int32_t) blobs[i].x, (int32_t) blobs[i].y + brew_sprite->height, (int32_t) blobs[i].x, (int32_t) blobs[i].y, graphics_make_color(0,255,0,255));
         // Draw collision vectors
-        if (collisions[i].length >= 0) {
-            uint32_t color = (collisions[i].normalized.x != 0 || collisions[i].normalized.y != 0) ? graphics_make_color(0,0,255,255) : graphics_make_color(127,127,127,255);
-            graphics_draw_line_trans(disp, (int32_t) collisions[i].pos.x, (int32_t) collisions[i].pos.y, (int32_t) collisions[i].pos.x + collisions[i].dir.x, (int32_t) collisions[i].pos.y + collisions[i].dir.y, color);
-        }
+        // FIXME RDPQ if (collisions[i].length >= 0) {
+        //    uint32_t color = (collisions[i].normalized.x != 0 || collisions[i].normalized.y != 0) ? graphics_make_color(0,0,255,255) : graphics_make_color(127,127,127,255);
+        //    graphics_draw_line_trans(disp, (int32_t) collisions[i].pos.x, (int32_t) collisions[i].pos.y, (int32_t) collisions[i].pos.x + collisions[i].dir.x, (int32_t) collisions[i].pos.y + collisions[i].dir.y, color);
+        //}
         // TODO draw line between player center and ball center
-        graphics_draw_line_trans(disp, (int32_t) blobs[i].x + brew_sprite->width/2, (int32_t) blobs[i].y + brew_sprite->height/2, (int32_t) ball.x, (int32_t) ball.y, graphics_make_color(255,255,0,255));
+        // FIXME RDPQ graphics_draw_line_trans(disp, (int32_t) blobs[i].x + brew_sprite->width/2, (int32_t) blobs[i].y + brew_sprite->height/2, (int32_t) ball.x, (int32_t) ball.y, graphics_make_color(255,255,0,255));
         
         // TODO draw velocity from player center ??
-        graphics_draw_line_trans(disp, (int32_t) blobs[i].x + brew_sprite->width/2, (int32_t) blobs[i].y + brew_sprite->height/2, (int32_t) blobs[i].x + brew_sprite->width/2 + blobs[i].dx*3, (int32_t) blobs[i].y + brew_sprite->height/2 + blobs[i].dy*3, graphics_make_color(0,0,255,255));
+        // FIXME RDPQ graphics_draw_line_trans(disp, (int32_t) blobs[i].x + brew_sprite->width/2, (int32_t) blobs[i].y + brew_sprite->height/2, (int32_t) blobs[i].x + brew_sprite->width/2 + blobs[i].dx*3, (int32_t) blobs[i].y + brew_sprite->height/2 + blobs[i].dy*3, graphics_make_color(0,0,255,255));
     }
 
     // TODO draw net
-    graphics_draw_sprite_trans(disp, (int32_t) net.x, (int32_t) net.y, net_sprite);
-    graphics_draw_line_trans(disp, (int32_t) net.x, (int32_t) net.y, (int32_t) net.x + net_sprite->width, (int32_t) net.y, graphics_make_color(0,255,0,255));
-    graphics_draw_line_trans(disp, (int32_t) net.x + net_sprite->width, (int32_t) net.y, (int32_t) net.x + net_sprite->width, (int32_t) net.y + net_sprite->height, graphics_make_color(0,255,0,255));
-    graphics_draw_line_trans(disp, (int32_t) net.x + net_sprite->width, (int32_t) net.y + net_sprite->height, (int32_t) net.x, (int32_t) net.y + net_sprite->height, graphics_make_color(0,255,0,255));
-    graphics_draw_line_trans(disp, (int32_t) net.x, (int32_t) net.y + net_sprite->height, (int32_t) net.x, (int32_t) net.y, graphics_make_color(0,255,0,255));
+    rdpq_sprite_blit(net_sprite, net.x, net.y, &(rdpq_blitparms_t){
+        .scale_x = net.scale_factor, .scale_y = net.scale_factor,
+    });
+    //graphics_draw_sprite_trans(disp, (int32_t) net.x, (int32_t) net.y, net_sprite);
+    // FIXME RDPQ graphics_draw_line_trans(disp, (int32_t) net.x, (int32_t) net.y, (int32_t) net.x + net_sprite->width, (int32_t) net.y, graphics_make_color(0,255,0,255));
+    // FIXME RDPQ graphics_draw_line_trans(disp, (int32_t) net.x + net_sprite->width, (int32_t) net.y, (int32_t) net.x + net_sprite->width, (int32_t) net.y + net_sprite->height, graphics_make_color(0,255,0,255));
+    // FIXME RDPQ graphics_draw_line_trans(disp, (int32_t) net.x + net_sprite->width, (int32_t) net.y + net_sprite->height, (int32_t) net.x, (int32_t) net.y + net_sprite->height, graphics_make_color(0,255,0,255));
+    // FIXME RDPQ graphics_draw_line_trans(disp, (int32_t) net.x, (int32_t) net.y + net_sprite->height, (int32_t) net.x, (int32_t) net.y, graphics_make_color(0,255,0,255));
 
     // TODO Draw scores
     char scores[15];
@@ -506,8 +525,8 @@ void render(int cur_frame)
     snprintf(debug, sizeof(debug), "Hits: %d (P%d)", hitCount, lastPlayer);
     graphics_draw_text(disp, 3.0*(display_get_width()/4.0f), 40, debug);
 
-    /* Force backbuffer flip */
-    display_show(disp);
+    // Force backbuffer flip
+    rdpq_detach_show(); //display_show(disp);
 }
 
 #include <float.h>
@@ -529,6 +548,8 @@ int main()
     uint32_t display_height = display_get_height();
     
     dfs_init(DFS_DEFAULT_LOCATION);
+
+    rdpq_init();
 
 	audio_init(44100, 4);
 	mixer_init(4);
