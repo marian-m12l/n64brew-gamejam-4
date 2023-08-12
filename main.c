@@ -1,13 +1,13 @@
 #include "libdragon.h"
-#include <malloc.h>
 #include <math.h>
 
+static sprite_t *background_sprite;
 static sprite_t *brew_sprite;
 static sprite_t *ball_sprite;
 static sprite_t *net_sprite;
-static sprite_t *tiles_sprite;
 
-static rspq_block_t *tiles_block;
+static wav64_t sfx_hit;
+static wav64_t sfx_music;
 
 typedef struct {
     float x;
@@ -30,7 +30,7 @@ typedef struct {
 } object_t;
 
 #define NUM_BLOBS 2
-#define INITIAL_COUNTDOWN 3
+#define INITIAL_COUNTDOWN 0
 
 #define FRAMERATE 60
 #define AIR_FRICTION_FACTOR 0.99f
@@ -57,9 +57,12 @@ static int scorePlayer2 = 0;
 static int lastPlayer = -1;
 static int hitCount = 0;
 static int countdown = 0;
-static timer_link_t* countdown_timer;
+//static timer_link_t* countdown_timer;
 
-static int mode = 1;
+// Mixer channel allocation
+#define CHANNEL_SFX1    0
+#define CHANNEL_SFX2    1
+#define CHANNEL_MUSIC   2
 
 
 void init_player(uint32_t i) {
@@ -71,23 +74,6 @@ void init_player(uint32_t i) {
     obj->dy = 0;
     obj->scale_factor = 1.0f;
 }
-
-// Fair and fast random generation (using xorshift32, with explicit seed)
-static uint32_t rand_state = 1;
-static uint32_t rand(void) {
-	uint32_t x = rand_state;
-	x ^= x << 13;
-	x ^= x >> 7;
-	x ^= x << 5;
-	return rand_state = x;
-}
-
-// RANDN(n): generate a random number from 0 to n-1
-#define RANDN(n) ({ \
-	__builtin_constant_p((n)) ? \
-		(rand()%(n)) : \
-		(uint32_t)(((uint64_t)rand() * (n)) >> 32); \
-})
 
 bool rectRect(float r1x, float r1y, float r1w, float r1h, float r2x, float r2y, float r2w, float r2h) {
   return (r1x + r1w >= r2x &&    // r1 right edge past r2 left
@@ -202,26 +188,22 @@ void update_countdown(int ovfl);
 
 void start_countdown() {
     fprintf(stderr, "start_countdown: %d\n", countdown);
-    if (countdown_timer != NULL) {
+    /*if (countdown_timer != NULL) {
         restart_timer(countdown_timer);
     } else {
         countdown_timer = new_timer(TIMER_TICKS(1000000), TF_CONTINUOUS, update_countdown);
-    }
+    }*/
 }
 
 void update_countdown(int ovfl) {
-    countdown = countdown - 1;
+    /*countdown = countdown - 1;
     if (in_play()) {
         stop_timer(countdown_timer);
-    }
+    }*/
 }
 
 void update(int ovfl)
 {
-    if (mode == 2) {
-        return;
-    }
-
     if (!in_play()) {
         return;
     }
@@ -440,6 +422,9 @@ void update(int ovfl)
                 hitCount = 0;
             }
             hitCount++;
+
+            // Sound FX
+			wav64_play(&sfx_hit, CHANNEL_SFX1);
         }
         collisions[i] = collision;
         // TODO Resolve collisions
@@ -448,7 +433,7 @@ void update(int ovfl)
     cur_tick++;
 }
 
-void render(int cur_frame, int mode)
+void render(int cur_frame)
 {
     surface_t *disp = display_get();
 
@@ -457,128 +442,69 @@ void render(int cur_frame, int mode)
 
     /* Set the text output color */
     graphics_set_color(0x0, 0xFFFFFFFF);
-    
-    if (mode == 0) {    // RDPQ
-        // Attach and clear the screen
-        graphics_draw_text( disp, 20, 20, "Mode 0: RDPQ" );
 
-        rdpq_attach/*_clear*/(disp, NULL);
+    graphics_draw_sprite_trans(disp, 0, 0, background_sprite);  // FIXME sprite size
 
-        // Draw the tile background, by playing back the compiled block.
-        // This is using copy mode by default, but notice how it can switch
-        // to standard mode (aka "1 cycle" in RDP terminology) in a completely
-        // transparent way. Even if the block is compiled, the RSP commands within it
-        // will adapt its commands to the current render mode, Try uncommenting
-        // the line below to see.
-        //rdpq_debug_log_msg("tiles");
-        rdpq_set_mode_copy(false);
-        // rdpq_set_mode_standard();
-        rspq_block_run(tiles_block);
-        
-        // Draw the brew sprites. Use standard mode because copy mode cannot handle
-        // scaled sprites.
-        //rdpq_debug_log_msg("sprites");
-        rdpq_set_mode_standard();
-        rdpq_mode_filter(FILTER_BILINEAR);
-        rdpq_mode_alphacompare(1);                // colorkey (draw pixel with alpha >= 1)
-
-        for (uint32_t i = 0; i < NUM_BLOBS; i++)
-        {
-            rdpq_sprite_blit(brew_sprite, (int32_t) blobs[i].x, (int32_t) blobs[i].y, &(rdpq_blitparms_t){
-                .scale_x = blobs[i].scale_factor, .scale_y = blobs[i].scale_factor,
-            });
-        }
-
-        // Ball
-        rdpq_sprite_blit(ball_sprite, (int32_t) (ball.x - ball_sprite->width/2), (int32_t) (ball.y - ball_sprite->height/2), &(rdpq_blitparms_t){
-            .scale_x = ball.scale_factor, .scale_y = ball.scale_factor,
-        });
-
-        rdpq_detach();//_show();
-        
-        graphics_draw_text( disp, 20, 20, "Mode 0: RDPQ" );
-    } else if (mode == 1) {    // Sprites
-        graphics_draw_text( disp, 20, 20, "Mode 1: Sprites" );
-
-        for (uint32_t i = 0; i < NUM_BLOBS; i++)
-        {
-            graphics_draw_sprite_trans(disp, (int32_t) blobs[i].x, (int32_t) blobs[i].y, brew_sprite);
-        }
-
-        // Ball
-        graphics_draw_sprite_trans(disp, (int32_t) (ball.x - ball_sprite->width/2), (int32_t) (ball.y - ball_sprite->height/2), ball_sprite);
-
-
-        // TODO Draw center
-        graphics_draw_line_trans(disp, (int32_t) ball.x, (int32_t) ball.y, (int32_t) ball.x, (int32_t) ball.y, graphics_make_color(0,255,0,255));
-        // TODO draw velocity from ball center ??
-        graphics_draw_line_trans(disp, (int32_t) ball.x, (int32_t) ball.y, (int32_t) ball.x + ball.dx*3, (int32_t) ball.y + ball.dy*3, graphics_make_color(0,0,255,255));
-
-
-        for (uint32_t i = 0; i < NUM_BLOBS; i++)
-        {
-            graphics_draw_sprite_trans(disp, (int32_t) blobs[i].x, (int32_t) blobs[i].y, brew_sprite);
-            // TODO Draw bounding box
-            graphics_draw_line_trans(disp, (int32_t) blobs[i].x, (int32_t) blobs[i].y, (int32_t) blobs[i].x + brew_sprite->width, (int32_t) blobs[i].y, graphics_make_color(0,255,0,255));
-            graphics_draw_line_trans(disp, (int32_t) blobs[i].x + brew_sprite->width, (int32_t) blobs[i].y, (int32_t) blobs[i].x + brew_sprite->width, (int32_t) blobs[i].y + brew_sprite->height, graphics_make_color(0,255,0,255));
-            graphics_draw_line_trans(disp, (int32_t) blobs[i].x + brew_sprite->width, (int32_t) blobs[i].y + brew_sprite->height, (int32_t) blobs[i].x, (int32_t) blobs[i].y + brew_sprite->height, graphics_make_color(0,255,0,255));
-            graphics_draw_line_trans(disp, (int32_t) blobs[i].x, (int32_t) blobs[i].y + brew_sprite->height, (int32_t) blobs[i].x, (int32_t) blobs[i].y, graphics_make_color(0,255,0,255));
-            // Draw collision vectors
-            if (collisions[i].length >= 0) {
-                uint32_t color = (collisions[i].normalized.x != 0 || collisions[i].normalized.y != 0) ? graphics_make_color(0,0,255,255) : graphics_make_color(127,127,127,255);
-                graphics_draw_line_trans(disp, (int32_t) collisions[i].pos.x, (int32_t) collisions[i].pos.y, (int32_t) collisions[i].pos.x + collisions[i].dir.x, (int32_t) collisions[i].pos.y + collisions[i].dir.y, color);
-            }
-            // TODO draw line between player center and ball center
-            graphics_draw_line_trans(disp, (int32_t) blobs[i].x + brew_sprite->width/2, (int32_t) blobs[i].y + brew_sprite->height/2, (int32_t) ball.x, (int32_t) ball.y, graphics_make_color(255,255,0,255));
-            
-            // TODO draw velocity from player center ??
-            graphics_draw_line_trans(disp, (int32_t) blobs[i].x + brew_sprite->width/2, (int32_t) blobs[i].y + brew_sprite->height/2, (int32_t) blobs[i].x + brew_sprite->width/2 + blobs[i].dx*3, (int32_t) blobs[i].y + brew_sprite->height/2 + blobs[i].dy*3, graphics_make_color(0,0,255,255));
-        }
-
-        // TODO draw net
-        graphics_draw_sprite_trans(disp, (int32_t) net.x, (int32_t) net.y, net_sprite);
-        graphics_draw_line_trans(disp, (int32_t) net.x, (int32_t) net.y, (int32_t) net.x + net_sprite->width, (int32_t) net.y, graphics_make_color(0,255,0,255));
-        graphics_draw_line_trans(disp, (int32_t) net.x + net_sprite->width, (int32_t) net.y, (int32_t) net.x + net_sprite->width, (int32_t) net.y + net_sprite->height, graphics_make_color(0,255,0,255));
-        graphics_draw_line_trans(disp, (int32_t) net.x + net_sprite->width, (int32_t) net.y + net_sprite->height, (int32_t) net.x, (int32_t) net.y + net_sprite->height, graphics_make_color(0,255,0,255));
-        graphics_draw_line_trans(disp, (int32_t) net.x, (int32_t) net.y + net_sprite->height, (int32_t) net.x, (int32_t) net.y, graphics_make_color(0,255,0,255));
-
-        // TODO Draw scores
-        char scores[15];
-        snprintf(scores, sizeof(scores), "Score: %d | %d", scorePlayer1, scorePlayer2);
-        graphics_draw_text(disp, display_get_width()/4.0f, 40, scores);
-
-        // TODO Draw countdown
-        if (countdown > 0) {
-            char count[15];
-            snprintf(count, sizeof(count), "%d", countdown);
-            graphics_draw_text(disp, display_get_width()/2.0f, 80, count);
-        } else {
-            graphics_draw_text(disp, display_get_width()/2.0f, 80, " ");
-        }
-
-        // TODO Draw debug data
-        char debug[15];
-        snprintf(debug, sizeof(debug), "Hits: %d (P%d)", hitCount, lastPlayer);
-        graphics_draw_text(disp, 3.0*(display_get_width()/4.0f), 40, debug);
-    } else {
-        // TODO Can write to disp->buffer ?! --> memcpy ??? DMA ???
-        static uint32_t offset;
-        int len = TEX_FORMAT_PIX2BYTES(surface_get_format(disp), disp->width * disp->height) / 8;
-        int lineLength = len / disp->height;
-        uint64_t c64 = 0xffaa6600;  // 4 pixels @ 16bpp
-        uint64_t *buffer = (uint64_t *)(disp->buffer);
-        for( int i = 0; i < len; i++ ) {
-            int line = (i / lineLength);
-            if (line == offset) {
-                buffer[i] = c64;
-            } else if (line % 10 == 0) {
-                buffer[i] = 0xffffffff;
-            } else {
-                buffer[i] = 0;
-            }
-        }
-        offset = (offset+1) % disp->height;
+    for (uint32_t i = 0; i < NUM_BLOBS; i++)
+    {
+        graphics_draw_sprite_trans(disp, (int32_t) blobs[i].x, (int32_t) blobs[i].y, brew_sprite);
     }
+
+    // Ball
+    graphics_draw_sprite_trans(disp, (int32_t) (ball.x - ball_sprite->width/2), (int32_t) (ball.y - ball_sprite->height/2), ball_sprite);
+
+
+    // TODO Draw center
+    graphics_draw_line_trans(disp, (int32_t) ball.x, (int32_t) ball.y, (int32_t) ball.x, (int32_t) ball.y, graphics_make_color(0,255,0,255));
+    // TODO draw velocity from ball center ??
+    graphics_draw_line_trans(disp, (int32_t) ball.x, (int32_t) ball.y, (int32_t) ball.x + ball.dx*3, (int32_t) ball.y + ball.dy*3, graphics_make_color(0,0,255,255));
+
+
+    for (uint32_t i = 0; i < NUM_BLOBS; i++)
+    {
+        graphics_draw_sprite_trans(disp, (int32_t) blobs[i].x, (int32_t) blobs[i].y, brew_sprite);
+        // TODO Draw bounding box
+        graphics_draw_line_trans(disp, (int32_t) blobs[i].x, (int32_t) blobs[i].y, (int32_t) blobs[i].x + brew_sprite->width, (int32_t) blobs[i].y, graphics_make_color(0,255,0,255));
+        graphics_draw_line_trans(disp, (int32_t) blobs[i].x + brew_sprite->width, (int32_t) blobs[i].y, (int32_t) blobs[i].x + brew_sprite->width, (int32_t) blobs[i].y + brew_sprite->height, graphics_make_color(0,255,0,255));
+        graphics_draw_line_trans(disp, (int32_t) blobs[i].x + brew_sprite->width, (int32_t) blobs[i].y + brew_sprite->height, (int32_t) blobs[i].x, (int32_t) blobs[i].y + brew_sprite->height, graphics_make_color(0,255,0,255));
+        graphics_draw_line_trans(disp, (int32_t) blobs[i].x, (int32_t) blobs[i].y + brew_sprite->height, (int32_t) blobs[i].x, (int32_t) blobs[i].y, graphics_make_color(0,255,0,255));
+        // Draw collision vectors
+        if (collisions[i].length >= 0) {
+            uint32_t color = (collisions[i].normalized.x != 0 || collisions[i].normalized.y != 0) ? graphics_make_color(0,0,255,255) : graphics_make_color(127,127,127,255);
+            graphics_draw_line_trans(disp, (int32_t) collisions[i].pos.x, (int32_t) collisions[i].pos.y, (int32_t) collisions[i].pos.x + collisions[i].dir.x, (int32_t) collisions[i].pos.y + collisions[i].dir.y, color);
+        }
+        // TODO draw line between player center and ball center
+        graphics_draw_line_trans(disp, (int32_t) blobs[i].x + brew_sprite->width/2, (int32_t) blobs[i].y + brew_sprite->height/2, (int32_t) ball.x, (int32_t) ball.y, graphics_make_color(255,255,0,255));
+        
+        // TODO draw velocity from player center ??
+        graphics_draw_line_trans(disp, (int32_t) blobs[i].x + brew_sprite->width/2, (int32_t) blobs[i].y + brew_sprite->height/2, (int32_t) blobs[i].x + brew_sprite->width/2 + blobs[i].dx*3, (int32_t) blobs[i].y + brew_sprite->height/2 + blobs[i].dy*3, graphics_make_color(0,0,255,255));
+    }
+
+    // TODO draw net
+    graphics_draw_sprite_trans(disp, (int32_t) net.x, (int32_t) net.y, net_sprite);
+    graphics_draw_line_trans(disp, (int32_t) net.x, (int32_t) net.y, (int32_t) net.x + net_sprite->width, (int32_t) net.y, graphics_make_color(0,255,0,255));
+    graphics_draw_line_trans(disp, (int32_t) net.x + net_sprite->width, (int32_t) net.y, (int32_t) net.x + net_sprite->width, (int32_t) net.y + net_sprite->height, graphics_make_color(0,255,0,255));
+    graphics_draw_line_trans(disp, (int32_t) net.x + net_sprite->width, (int32_t) net.y + net_sprite->height, (int32_t) net.x, (int32_t) net.y + net_sprite->height, graphics_make_color(0,255,0,255));
+    graphics_draw_line_trans(disp, (int32_t) net.x, (int32_t) net.y + net_sprite->height, (int32_t) net.x, (int32_t) net.y, graphics_make_color(0,255,0,255));
+
+    // TODO Draw scores
+    char scores[15];
+    snprintf(scores, sizeof(scores), "Score: %d | %d", scorePlayer1, scorePlayer2);
+    graphics_draw_text(disp, display_get_width()/4.0f, 40, scores);
+
+    // TODO Draw countdown
+    if (countdown > 0) {
+        char count[15];
+        snprintf(count, sizeof(count), "%d", countdown);
+        graphics_draw_text(disp, display_get_width()/2.0f, 80, count);
+    } else {
+        graphics_draw_text(disp, display_get_width()/2.0f, 80, " ");
+    }
+
+    // TODO Draw debug data
+    char debug[15];
+    snprintf(debug, sizeof(debug), "Hits: %d (P%d)", hitCount, lastPlayer);
+    graphics_draw_text(disp, 3.0*(display_get_width()/4.0f), 40, debug);
 
     /* Force backbuffer flip */
     display_show(disp);
@@ -592,6 +518,8 @@ int main()
     debug_init_isviewer();
     debug_init_usblog();
 
+    fprintf(stderr, "Starting\n");
+
     display_init(RESOLUTION_640x480, DEPTH_16_BPP, 3, GAMMA_NONE, ANTIALIAS_RESAMPLE);
 
     controller_init();
@@ -602,10 +530,16 @@ int main()
     
     dfs_init(DFS_DEFAULT_LOCATION);
 
-    rdpq_init();
-    rdpq_debug_start();
+	audio_init(44100, 4);
+	mixer_init(4);
 
-    fprintf(stderr, "Starting\n");
+	wav64_open(&sfx_hit, "rom:/hit.wav64");
+
+	wav64_open(&sfx_music, "rom:/music.wav64"); // FIXME attribution
+	wav64_set_loop(&sfx_music, true);
+    wav64_play(&sfx_music, CHANNEL_MUSIC);
+
+    background_sprite = sprite_load("rom:/background.sprite");  // FIXME attribution
 
     brew_sprite = sprite_load("rom:/n64brew.sprite");
 
@@ -638,49 +572,6 @@ int main()
     net.dy = 0;
     net.scale_factor = 1.0f;
 
-    tiles_sprite = sprite_load("rom:/tiles.sprite");
-
-    surface_t tiles_surf = sprite_get_pixels(tiles_sprite);
-
-    // Create a block for the background, so that we can replay it later.
-    rspq_block_begin();
-
-    // Check if the sprite was compiled with a paletted format. Normally
-    // we should know this beforehand, but for this demo we pretend we don't
-    // know. This also shows how rdpq can transparently work in both modes.
-    bool tlut = false;
-    tex_format_t tiles_format = sprite_get_format(tiles_sprite);
-    if (tiles_format == FMT_CI4 || tiles_format == FMT_CI8) {
-        // If the sprite is paletted, turn on palette mode and load the
-        // palette in TMEM. We use the mode stack for demonstration,
-        // so that we show how a block can temporarily change the current
-        // render mode, and then restore it at the end.
-        rdpq_mode_push();
-        rdpq_mode_tlut(TLUT_RGBA16);
-        rdpq_tex_upload_tlut(sprite_get_palette(tiles_sprite), 0, 16);
-        tlut = true;
-    }
-    uint32_t tile_width = tiles_sprite->width / tiles_sprite->hslices;
-    uint32_t tile_height = tiles_sprite->height / tiles_sprite->vslices;
- 
-    for (uint32_t ty = 0; ty < display_height; ty += tile_height)
-    {
-        for (uint32_t tx = 0; tx < display_width; tx += tile_width)
-        {
-            // Load a random tile among the 4 available in the texture,
-            // and draw it as a rectangle.
-            // Notice that this code is agnostic to both the texture format
-            // and the render mode (standard vs copy), it will work either way.
-            int s = RANDN(2)*32, t = RANDN(2)*32;
-            rdpq_tex_upload_sub(TILE0, &tiles_surf, NULL, s, t, s+32, t+32);
-            rdpq_texture_rectangle(TILE0, tx, ty, tx+32, ty+32, s, t);
-        }
-    }
-    
-    // Pop the mode stack if we pushed it before
-    if (tlut) rdpq_mode_pop();
-    tiles_block = rspq_block_end();
-
     countdown = INITIAL_COUNTDOWN;
     start_countdown();
 
@@ -692,16 +583,10 @@ int main()
     int cur_frame = 0;
     while (1)
     {
-        render(cur_frame, mode);
+        render(cur_frame);
 
         controller_scan();
-        struct controller_data ckeys = get_keys_down();
         struct controller_data pressed = get_keys_pressed();
-
-        // TODO switch render mode rdpq / sprites ??
-        if (ckeys.c[0].Z) {
-            mode = (mode + 1) % 3;
-        }
 
         if (in_play()) {
             for (uint32_t i = 0; i < NUM_BLOBS; i++)
@@ -724,6 +609,14 @@ int main()
                 }
             }
         }
+
+		// Check whether one audio buffer is ready, otherwise wait for next
+		// frame to perform mixing.
+		if (audio_can_write()) {    	
+			short *buf = audio_write_begin();
+			mixer_poll(buf, audio_get_buffer_length());
+			audio_write_end();
+		}
 
         cur_frame++;
     }
