@@ -58,7 +58,7 @@ static int scorePlayer2 = 0;
 static int lastPlayer = -1;
 static int hitCount = 0;
 static int countdown = 0;
-static timer_link_t* countdown_timer;
+//static timer_link_t* countdown_timer;
 
 // Mixer channel allocation
 #define CHANNEL_SFX1    0
@@ -189,18 +189,18 @@ void update_countdown(int ovfl);
 
 void start_countdown() {
     fprintf(stderr, "start_countdown: %d\n", countdown);
-    if (countdown_timer != NULL) {
+    /*if (countdown_timer != NULL) {
         restart_timer(countdown_timer);
     } else {
         countdown_timer = new_timer(TIMER_TICKS(1000000), TF_CONTINUOUS, update_countdown);
-    }
+    }*/
 }
 
 void update_countdown(int ovfl) {
     countdown = countdown - 1;
-    if (in_play()) {
+    /*if (in_play()) {
         stop_timer(countdown_timer);
-    }
+    }*/
 }
 
 void update(int ovfl)
