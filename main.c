@@ -9,6 +9,7 @@ static sprite_t *net_sprite;
 static wav64_t sfx_hit;
 static wav64_t sfx_halt;
 static wav64_t sfx_music;
+static wav64_t sfx_win;
 
 typedef struct {
     float x;
@@ -32,6 +33,7 @@ typedef struct {
 
 #define NUM_BLOBS 2
 #define INITIAL_COUNTDOWN 3
+#define MAX_POINTS 21
 
 #define FRAMERATE 60
 #define AIR_FRICTION_FACTOR 0.99f
@@ -64,7 +66,8 @@ uint32_t startTime = 0;
 // Mixer channel allocation
 #define CHANNEL_SFX1    0
 #define CHANNEL_SFX2    1
-#define CHANNEL_MUSIC   2
+#define CHANNEL_SFX3    2
+#define CHANNEL_MUSIC   3
 
 
 void init_player(uint32_t i) {
@@ -182,27 +185,35 @@ void applyGravity(object_t* obj) {
     }
 }
 
-bool in_play() {
-    return countdown == 0;
+int get_winner() {
+    return (scorePlayer1 >= MAX_POINTS && (scorePlayer1 - scorePlayer2) > 1)
+        ? 1
+        : (scorePlayer2 >= MAX_POINTS && (scorePlayer2 - scorePlayer1) > 1)
+            ? 2
+            : 0;
 }
 
-void update_countdown(int ovfl);
+bool in_play() {
+    return countdown == 0 && !get_winner();
+}
+
+/*void update_countdown(int ovfl);
 
 void start_countdown() {
     //fprintf(stderr, "start_countdown: %d\n", countdown);
-    /*if (countdown_timer != NULL) {
+    if (countdown_timer != NULL) {
         restart_timer(countdown_timer);
     } else {
         countdown_timer = new_timer(TIMER_TICKS(1000000), TF_CONTINUOUS, update_countdown);
-    }*/
+    }
 }
 
 void update_countdown(int ovfl) {
     countdown = countdown - 1;
-    /*if (in_play()) {
+    if (in_play()) {
         stop_timer(countdown_timer);
-    }*/
-}
+    }
+}*/
 
 void update(int ovfl)
 {
@@ -210,8 +221,17 @@ void update(int ovfl)
         // Countdown
         uint32_t now = get_ticks_ms();
         //fprintf(stderr, "countdown=%d startTime=%ld now=%ld\n", countdown, startTime, now);
-        countdown = INITIAL_COUNTDOWN - ((now - startTime) / 1000);
+        uint32_t elapsed = now < startTime ? (now + (91625 - startTime)) : (now - startTime);
+        //fprintf(stderr, "countdown=%d startTime=%ld now=%ld elapsed=%ld\n", countdown, startTime, now, elapsed);
+        countdown = INITIAL_COUNTDOWN - (elapsed / 1000);
         //fprintf(stderr, "countdown=%d\n", countdown);
+        // New game
+        if (countdown == 0 && !in_play()) {
+            scorePlayer1 = 0;
+            scorePlayer2 = 0;
+            countdown = INITIAL_COUNTDOWN;
+            startTime = get_ticks_ms();
+        }
         return;
     }
 
@@ -243,6 +263,12 @@ void update(int ovfl)
         //start_countdown();
         startTime = get_ticks_ms();
         // TODO Handle end of game
+        int winner = get_winner();
+        if (winner) {
+            // TODO play sfx + display winner
+            wav64_play(&sfx_win, CHANNEL_SFX3);
+            //fprintf(stderr, "Player %d WON!!!\n", winner);
+        }
     }
 
     ////fprintf(stderr, "Applying screen limits BALL\n");
@@ -375,10 +401,12 @@ void update(int ovfl)
             // FIXME if player and ball velocity have opposite signs, ball velocity is inversed (rebound)
             // TODO should bounce even if obj is not moving !!!
             // TODO should depend on the ball position relative to the player ??
-            float ball_dx_fixed = (ball.dx * obj->dx) >= 0 ? ball.dx : -ball.dx;
-            float ball_dy_fixed = (ball.dy * obj->dy) >= 0 ? ball.dy : -ball.dy;
-            float next_ball_dx = /*fabs(collisionNormal.x) * */(ball_dx_fixed + obj->dx);
-            float next_ball_dy = /*fabs(collisionNormal.y) * */(ball_dy_fixed + obj->dy);
+//            float ball_dx_fixed = (ball.dx * obj->dx) >= 0 ? ball.dx : -ball.dx;
+//            float ball_dy_fixed = (ball.dy * obj->dy) >= 0 ? ball.dy : -ball.dy;
+//            float next_ball_dx = /*fabs(collisionNormal.x) * */(ball_dx_fixed + obj->dx);
+//            float next_ball_dy = /*fabs(collisionNormal.y) * */(ball_dy_fixed + obj->dy);
+            float next_ball_dx = obj->dx - ball.dx;
+            float next_ball_dy = obj->dy - ball.dy;
             //fprintf(stderr, "\tball.dx: %f --> %f\n", ball.dx, next_ball_dx);
             //fprintf(stderr, "\tball.dy: %f --> %f\n", ball.dy, next_ball_dy);
             // TODO Compute bounce vector from ball/player centers ???
@@ -472,12 +500,19 @@ void render(int cur_frame)
     graphics_draw_text(disp, display_get_width()/4.0f, 40, scores);
 
     // TODO Draw countdown
-    if (countdown > 0) {
-        char count[15];
-        snprintf(count, sizeof(count), "%d", countdown);
-        graphics_draw_text(disp, display_get_width()/2.0f, 80, count);
+    int winner = get_winner();
+    if (winner) {
+        char win[15];
+        snprintf(win, sizeof(win), "Player %d WINS!", winner);
+        graphics_draw_text(disp, display_get_width()/2.0f, 80, win);
     } else {
-        graphics_draw_text(disp, display_get_width()/2.0f, 80, " ");
+        if (countdown > 0) {
+            char count[15];
+            snprintf(count, sizeof(count), "%d", countdown);
+            graphics_draw_text(disp, display_get_width()/2.0f, 80, count);
+        } else {
+            graphics_draw_text(disp, display_get_width()/2.0f, 80, " ");
+        }
     }
 
     // TODO Draw debug data
@@ -567,6 +602,7 @@ int main()
 
 	wav64_open(&sfx_hit, "rom:/hit.wav64");
 	wav64_open(&sfx_halt, "rom:/halt.wav64");
+	wav64_open(&sfx_win, "rom:/win.wav64");
 
 	wav64_open(&sfx_music, "rom:/music.wav64"); // FIXME attribution
 	wav64_set_loop(&sfx_music, true);
@@ -636,16 +672,16 @@ int main()
                     }
 
                     if (pressed.c[i].left) {
-                        obj->dx = -3;
+                        obj->dx = -6;
                     }
 
                     if (pressed.c[i].right) {
-                        obj->dx = 3;
+                        obj->dx = 6;
                     }
 
-                    if (fabs(pressed.c[i].x) > 5) {
+                    /*if (fabs(pressed.c[i].x) > 5) {
                         obj->dx = (pressed.c[i].x / 30);
-                    }
+                    }*/
                 }
             }
         }
