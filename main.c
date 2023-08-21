@@ -7,6 +7,7 @@ static sprite_t *ball_sprite;
 static sprite_t *net_sprite;
 
 static wav64_t sfx_hit;
+static wav64_t sfx_halt;
 static wav64_t sfx_music;
 
 typedef struct {
@@ -57,7 +58,7 @@ static int scorePlayer2 = 0;
 static int lastPlayer = -1;
 static int hitCount = 0;
 static int countdown = 0;
-//static timer_link_t* countdown_timer;
+static timer_link_t* countdown_timer;
 
 // Mixer channel allocation
 #define CHANNEL_SFX1    0
@@ -173,7 +174,7 @@ void applyGravity(object_t* obj) {
         fprintf(stderr, "dy < %f --> 0\n", SPEED_EPSILON);
         obj->dy = 0;
         obj->y = obj_max_y;
-    } else if (obj->y != obj_max_y) {
+    } else if (obj->y < obj_max_y - ball_sprite->height) {
         float next_dy = obj->dy + (GRAVITY_FACTOR / FRAMERATE);
         //fprintf(stderr, "blob[%ld]: y=%f dy=%f fabs(dy)=%f next_dy=%f\n", i, obj->y, obj->dy, fabs(obj->dy), next_dy);
         obj->dy = next_dy;
@@ -188,18 +189,18 @@ void update_countdown(int ovfl);
 
 void start_countdown() {
     fprintf(stderr, "start_countdown: %d\n", countdown);
-    /*if (countdown_timer != NULL) {
+    if (countdown_timer != NULL) {
         restart_timer(countdown_timer);
     } else {
         countdown_timer = new_timer(TIMER_TICKS(1000000), TF_CONTINUOUS, update_countdown);
-    }*/
+    }
 }
 
 void update_countdown(int ovfl) {
-    /*countdown = countdown - 1;
+    countdown = countdown - 1;
     if (in_play()) {
         stop_timer(countdown_timer);
-    }*/
+    }
 }
 
 void update(int ovfl)
@@ -211,6 +212,8 @@ void update(int ovfl)
     // Ball
     // Ball hits ground ???
     if (ball.y + ball.dy + ball_sprite->height/2 >= obj_max_y) {
+        // Sound FX
+        wav64_play(&sfx_halt, CHANNEL_SFX2);
         uint32_t display_width = display_get_width();
         // TODO score + no more hits!!!
         if (ball.x > net.x) {
@@ -551,13 +554,15 @@ int main()
 
     rdpq_init();
 
-	audio_init(44100, 4);
+	audio_init(12127, 4);
 	mixer_init(4);
 
 	wav64_open(&sfx_hit, "rom:/hit.wav64");
+	wav64_open(&sfx_halt, "rom:/halt.wav64");
 
 	wav64_open(&sfx_music, "rom:/music.wav64"); // FIXME attribution
 	wav64_set_loop(&sfx_music, true);
+    mixer_ch_set_vol(CHANNEL_MUSIC, 0.15f, 0.15f);
     wav64_play(&sfx_music, CHANNEL_MUSIC);
 
     background_sprite = sprite_load("rom:/background.sprite");  // FIXME attribution
